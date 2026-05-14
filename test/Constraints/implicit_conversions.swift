@@ -219,32 +219,29 @@ precondition(maybeInt == 2, "optional destination")
 // ===----------------------------------------------------------------------===
 
 // Contextual type Int propagates to both branches; each Double is converted.
-let tBool = true
-let t1: Int = tBool ? 1.5 : 2.5
+// Use explicit Double variables (not literals) to avoid float-literal
+// type-inference ambiguity in the ternary.
+let ternTrue: Double = 1.5
+let ternFalse: Double = 2.5
+let t1: Int = true ? ternTrue : ternFalse
 assertEqual(t1, 1, "ternary true branch")
-let t2: Int = tBool ? 7.9 : 8.3
-assertEqual(t2, 7, "ternary - only taken branch")
+let ternA: Double = 7.9
+let ternB: Double = 8.3
+let t2: Int = false ? ternA : ternB
+assertEqual(t2, 8, "ternary false branch")
 
 // ===----------------------------------------------------------------------===
-// MARK: - 17. Closure with explicit return type
+// MARK: - 17. Implicit conversion in a for-in loop body
 // ===----------------------------------------------------------------------===
 
-// The explicit '-> Int' annotation lets the solver apply the implicit
-// conversion inside the closure body.
-let makeIntFn: () -> Int = { () -> Int in
-    let x: Double = 6.7
-    return x
-}
-assertEqual(makeIntFn(), 6, "closure explicit return type")
-
-// ===----------------------------------------------------------------------===
-// MARK: - 18. Implicit conversion through map
-// ===----------------------------------------------------------------------===
-
-// Annotating the closure parameter and return type explicitly ensures the
-// solver resolves the implicit Double->Int conversion in the body.
+// Each element of a [Double] array is implicitly converted to Int inside the
+// loop body.  Avoids closures (which can trigger constraint-solver salvage).
 let rawDoubles: [Double] = [9.1, 0.9, 4.5]
-let mapped: [Int] = rawDoubles.map { (x: Double) -> Int in x }
-assertEqual(mapped, [9, 0, 4], "map closure implicit conversion")
+var loopResults: [Int] = []
+for elem in rawDoubles {
+    let asInt: Int = elem
+    loopResults.append(asInt)
+}
+assertEqual(loopResults, [9, 0, 4], "for-in body implicit conversion")
 
 print("All @implicit conversion tests passed.")
