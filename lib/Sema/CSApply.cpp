@@ -7424,6 +7424,35 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
 
       return outerCall;
     }
+
+    case ConversionRestrictionKind::UserDefined: {
+      auto *decl = cs.getImplicitConversion(fromType, toType);
+      if (!decl)
+        return nullptr;
+
+      auto declRef = resolveConcreteDeclRef(decl, locator);
+      Type initType = declRef.getDecl()->getInterfaceType();
+      if (declRef.getSubstitutions())
+        initType = initType.subst(declRef.getSubstitutions());
+
+      auto *ctorRefExpr =
+          new (ctx) DeclRefExpr(declRef, DeclNameLoc(), /*Implicit=*/true);
+      ctorRefExpr->setType(initType);
+
+      auto *typeExpr = TypeExpr::createImplicit(toType, ctx);
+      auto *innerCall = ConstructorRefCallExpr::create(
+          ctx, ctorRefExpr, typeExpr,
+          initType->castTo<FunctionType>()->getResult());
+      cs.cacheExprTypes(innerCall);
+
+      auto *argList =
+          ArgumentList::forImplicitUnlabeled(ctx, {cs.coerceToRValue(expr)});
+      auto *outerCall = CallExpr::createImplicit(ctx, innerCall, argList);
+      outerCall->setType(toType);
+      cs.setType(outerCall, toType);
+
+      return outerCall;
+    }
     }
   }
 

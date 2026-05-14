@@ -3186,6 +3186,10 @@ public:
                       SmallVectorImpl<RestrictionOrFix> &conversionsOrFixes,
                       ConstraintLocatorBuilder locator);
 
+  /// Determine whether an initializer annotated with @implicit can convert a
+  /// value from the source type to the destination type.
+  ConstructorDecl *getImplicitConversion(Type fromType, Type toType);
+
   TypeMatchResult
   matchPackTypes(PackType *pack1, PackType *pack2,
                  ConstraintKind kind, TypeMatchOptions flags,

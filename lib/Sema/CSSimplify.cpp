@@ -5298,6 +5298,111 @@ static bool repairOutOfOrderArgumentsInBinaryFunction(
 /// Attempt to repair typing failures and record fixes if needed.
 /// \return true if at least some of the failures has been repaired
 /// successfully, which allows type matcher to continue.
+ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
+                                                         Type toType) {
+  fromType = simplifyType(fromType)->getRValueType()
+                 ->lookThroughAllOptionalTypes();
+  toType = simplifyType(toType)->getRValueType()->lookThroughAllOptionalTypes();
+
+  if (fromType->isTypeVariableOrMember() || toType->isTypeVariableOrMember())
+    return nullptr;
+
+  auto *toNominal = toType->getAnyNominal();
+  if (!toNominal)
+    return nullptr;
+
+  auto fromCanType = fromType->getCanonicalType();
+
+  auto matches = [&](Decl *member) -> ConstructorDecl * {
+    auto *ctor = dyn_cast<ConstructorDecl>(member);
+    if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
+        ctor->isInvalid())
+      return nullptr;
+
+    auto *params = ctor->getParameters();
+    if (!params || params->size() != 1)
+      return nullptr;
+
+    Type resultType = ctor->getResultInterfaceType();
+    Type paramType = params->get(0)->getInterfaceType();
+    if (!resultType || !paramType)
+      return nullptr;
+
+    llvm::DenseMap<CanType, Type> substitutions;
+    struct TypeParameterBinder {
+      llvm::DenseMap<CanType, Type> &substitutions;
+
+      bool bind(Type pattern, Type actual) {
+        pattern = pattern->getCanonicalType();
+        actual = actual->getCanonicalType();
+
+        if (auto *genericParam = pattern->getAs<GenericTypeParamType>()) {
+          auto key = genericParam->getCanonicalType();
+          auto existing = substitutions.find(key);
+          if (existing != substitutions.end())
+            return existing->second->isEqual(actual);
+
+          substitutions[key] = actual;
+          return true;
+        }
+
+        if (pattern->isEqual(actual))
+          return true;
+
+        auto *patternGeneric = pattern->getAs<BoundGenericType>();
+        auto *actualGeneric = actual->getAs<BoundGenericType>();
+        if (!patternGeneric || !actualGeneric ||
+            patternGeneric->getDecl() != actualGeneric->getDecl())
+          return false;
+
+        auto patternArgs = patternGeneric->getGenericArgs();
+        auto actualArgs = actualGeneric->getGenericArgs();
+        if (patternArgs.size() != actualArgs.size())
+            return false;
+
+        for (auto idx : indices(patternArgs))
+          if (!bind(patternArgs[idx], actualArgs[idx]))
+            return false;
+
+        return true;
+      }
+    };
+
+    TypeParameterBinder binder{substitutions};
+    if (!binder.bind(resultType, toType))
+      return nullptr;
+
+    if (!substitutions.empty()) {
+      paramType = paramType.subst(
+          [&](SubstitutableType *type) -> Type {
+            auto found = substitutions.find(type->getCanonicalType());
+            if (found == substitutions.end())
+              return Type();
+            return found->second;
+          },
+          LookUpConformanceInModule());
+      if (!paramType)
+        return nullptr;
+    }
+
+    if (paramType->getCanonicalType() == fromCanType)
+      return ctor;
+
+    return nullptr;
+  };
+
+  for (auto *member : toNominal->getMembers())
+    if (auto *ctor = matches(member))
+      return ctor;
+
+  for (auto *extension : toNominal->getExtensions())
+    for (auto *member : extension->getMembers())
+      if (auto *ctor = matches(member))
+        return ctor;
+
+  return nullptr;
+}
+
 bool ConstraintSystem::repairFailures(
     Type lhs, Type rhs, ConstraintKind matchKind, TypeMatchOptions flags,
     SmallVectorImpl<RestrictionOrFix> &conversionsOrFixes,
@@ -5826,6 +5931,12 @@ bool ConstraintSystem::repairFailures(
 
       return true;
     }
+  }
+
+  if (!hasAnyRestriction() && matchKind >= ConstraintKind::Subtype &&
+      locator.trySimplifyToExpr() && getImplicitConversion(lhs, rhs)) {
+    conversionsOrFixes.push_back(ConversionRestrictionKind::UserDefined);
+    return true;
   }
 
   auto elt = path.back();
@@ -15033,6 +15144,14 @@ ConstraintSystem::simplifyRestrictedConstraintImpl(
     }
 
     increaseScore(SK_ImplicitValueConversion, locator, impact);
+
+    if (worseThanBestSolution())
+      return SolutionKind::Error;
+
+    return SolutionKind::Solved;
+  }
+  case ConversionRestrictionKind::UserDefined: {
+    increaseScore(SK_ImplicitValueConversion, locator, 10);
 
     if (worseThanBestSolution())
       return SolutionKind::Error;
