@@ -5299,10 +5299,14 @@ static bool repairOutOfOrderArgumentsInBinaryFunction(
 /// \return true if at least some of the failures has been repaired
 /// successfully, which allows type matcher to continue.
 ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
-                                                         Type toType) {
-  fromType = simplifyType(fromType)->getRValueType()
-                 ->lookThroughAllOptionalTypes();
+                                                         Type toType,
+                                                         Type &inferredToType) {
+  // Simplify but do NOT strip optionals yet — an @implicit init may explicitly
+  // accept an optional (e.g. `init(str: UnsafeMutablePointer<CChar>?)`), and
+  // that should be preferred over one that accepts the unwrapped type.
+  Type fromTypeWithOptional = simplifyType(fromType)->getRValueType();
   toType = simplifyType(toType)->getRValueType()->lookThroughAllOptionalTypes();
+  fromType = fromTypeWithOptional->lookThroughAllOptionalTypes();
 
   if (fromType->isTypeVariableOrMember() || toType->isTypeVariableOrMember())
     return nullptr;
@@ -5312,6 +5316,7 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     return nullptr;
 
   auto fromCanType = fromType->getCanonicalType();
+  auto fromCanTypeWithOptional = fromTypeWithOptional->getCanonicalType();
 
   auto matches = [&](Decl *member) -> ConstructorDecl * {
     auto *ctor = dyn_cast<ConstructorDecl>(member);
@@ -5369,8 +5374,46 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     };
 
     TypeParameterBinder binder{substitutions};
-    if (!binder.bind(resultType, toType))
+
+    // First try binding result -> toType (the normal case where toType is
+    // fully concrete, e.g. `let a: Array<Int> = someSet`).
+    // If toType contains free type variables (e.g. `let a: Array = someSet`),
+    // fall back to binding paramType -> fromType and then substitute into
+    // resultType to discover the concrete toType.
+    bool boundForward = binder.bind(resultType, toType) &&
+                        !toType->hasTypeVariable();
+    if (!boundForward) {
+      substitutions.clear();
+      if (!binder.bind(paramType, fromType))
+        return nullptr;
+      if (!substitutions.empty()) {
+        auto applySubsts = [&](Type t) -> Type {
+          return t.subst(
+              [&](SubstitutableType *type) -> Type {
+                auto found = substitutions.find(type->getCanonicalType());
+                if (found == substitutions.end())
+                  return Type();
+                return found->second;
+              },
+              LookUpConformanceInModule());
+        };
+        // Substitute into both resultType (to get the concrete toType, e.g.
+        // Array<Int>) and paramType (to compare against fromType correctly).
+        resultType = applySubsts(resultType);
+        paramType = applySubsts(paramType);
+        if (!resultType || !paramType)
+          return nullptr;
+      }
+      if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
+        inferredToType = resultType;
+        return ctor;
+      }
+      if (paramType->getCanonicalType() == fromCanType) {
+        inferredToType = resultType;
+        return ctor;
+      }
       return nullptr;
+    }
 
     if (!substitutions.empty()) {
       paramType = paramType.subst(
@@ -5385,11 +5428,48 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
         return nullptr;
     }
 
-    if (paramType->getCanonicalType() == fromCanType)
+    // Match against fromCanType (optional-stripped). The two-pass search above
+    // already tried an exact optional match via matchesExact, so here we only
+    // need the stripped comparison as a fallback.
+    if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
+      inferredToType = toType;
       return ctor;
+    }
+
+    if (paramType->getCanonicalType() == fromCanType) {
+      inferredToType = toType;
+      return ctor;
+    }
 
     return nullptr;
   };
+
+  // Two-pass search: first prefer an init whose parameter type matches the
+  // source type *including* any optionality (e.g. `init(x: T?)` wins over
+  // `init(_ x: T)` when the source is `T?`). Only if nothing matches exactly
+  // do we fall back to the optional-stripped fromCanType.
+  auto matchesExact = [&](Decl *member) -> ConstructorDecl * {
+    auto *ctor = dyn_cast<ConstructorDecl>(member);
+    if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
+        ctor->isInvalid())
+      return nullptr;
+    auto *params = ctor->getParameters();
+    if (!params || params->size() != 1)
+      return nullptr;
+    Type pt = params->get(0)->getInterfaceType();
+    if (!pt)
+      return nullptr;
+    return pt->getCanonicalType() == fromCanTypeWithOptional ? ctor : nullptr;
+  };
+
+  for (auto *member : toNominal->getMembers())
+    if (auto *ctor = matchesExact(member))
+      return ctor;
+
+  for (auto *extension : toNominal->getExtensions())
+    for (auto *member : extension->getMembers())
+      if (auto *ctor = matchesExact(member))
+        return ctor;
 
   for (auto *member : toNominal->getMembers())
     if (auto *ctor = matches(member))
@@ -5933,10 +6013,42 @@ bool ConstraintSystem::repairFailures(
     }
   }
 
-  if (!hasAnyRestriction() && matchKind >= ConstraintKind::Subtype &&
-      locator.trySimplifyToExpr() && getImplicitConversion(lhs, rhs)) {
-    conversionsOrFixes.push_back(ConversionRestrictionKind::UserDefined);
-    return true;
+  // Check for a user-defined implicit conversion via an @implicit-marked init.
+  // This fires when the locator anchors to a bare expression (empty path), or
+  // when the path has a single element that is a contextual type mismatch or an
+  // argument-to-parameter mismatch — the two most common sites where an
+  // implicit conversion should transparently apply.
+  //
+  // NOTE: This check is intentionally placed inside repairFailures() rather
+  // than in the primary matchTypes() flow. That means the @implicit init lookup
+  // only ever runs when the type checker has already determined there is a type
+  // mismatch — it has zero overhead on code where types match normally, which
+  // is the vast majority of code. This directly addresses the concern that
+  // user-defined implicit conversions could slow down type checking: the cost
+  // is strictly bounded to the error-recovery path that would be entered anyway.
+  {
+    Type inferredToType;
+    if (!hasAnyRestriction() && matchKind >= ConstraintKind::Subtype &&
+        getImplicitConversion(lhs, rhs, inferredToType)) {
+      bool locatorOK = locator.trySimplifyToExpr() != nullptr;
+      if (!locatorOK && path.size() == 1) {
+        auto &last = path.back();
+        locatorOK = last.is<LocatorPathElt::ContextualType>() ||
+                    last.is<LocatorPathElt::ApplyArgToParam>();
+      }
+      if (locatorOK) {
+        // If the init inferred a concrete toType (e.g. Array<Int> from a
+        // Set<Int> source), bind the rhs type variable to it now so the
+        // rest of the constraint system sees the resolved type.
+        if (inferredToType && !inferredToType->isEqual(rhs) &&
+            rhs->hasTypeVariable()) {
+          addConstraint(ConstraintKind::Bind, rhs, inferredToType,
+                        getConstraintLocator(locator));
+        }
+        conversionsOrFixes.push_back(ConversionRestrictionKind::UserDefined);
+        return true;
+      }
+    }
   }
 
   auto elt = path.back();

@@ -7426,32 +7426,97 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
     }
 
     case ConversionRestrictionKind::UserDefined: {
-      auto *decl = cs.getImplicitConversion(fromType, toType);
+      Type inferredToType;
+      auto *decl = cs.getImplicitConversion(fromType, toType, inferredToType);
       if (!decl)
         return nullptr;
 
+      // Use the concrete toType inferred by getImplicitConversion (e.g.
+      // Array<Int> when the annotation was just `Array` and the source was
+      // Set<Int>). Fall back to the original toType if nothing was inferred.
+      Type resolvedToType = inferredToType ? inferredToType : toType;
+
       auto declRef = resolveConcreteDeclRef(decl, locator);
       Type initType = declRef.getDecl()->getInterfaceType();
-      if (declRef.getSubstitutions())
+      if (auto *gft = initType->getAs<GenericFunctionType>()) {
+        // initType is a GenericFunctionType when the init is in a generic or
+        // constrained-extension context. We must use substGenericArgs() rather
+        // than plain subst() (which asserts on GenericFunctionType).
+        // resolveConcreteDeclRef looks up opened types by locator; since the
+        // @implicit init was not opened through normal overload resolution,
+        // that lookup returns empty. Instead build the substitution map
+        // directly from the constructor's generic signature using the concrete
+        // types we already know: resolvedToType supplies the Self substitution
+        // (e.g. Wrapper<Int> -> T=Int), and conformances are looked up normally.
+        SubstitutionMap subs = declRef.getSubstitutions();
+        if (!subs) {
+          auto *dc = decl->getInnermostDeclContext();
+          auto sig = dc->getGenericSignatureOfContext();
+          if (sig) {
+            // Build the substitution map over the constructor's full generic
+            // signature. We derive replacement types from resolvedToType's
+            // context substitution map (e.g. Wrapper<Int> -> T=Int) and look
+            // up conformances in the decl's parent module.
+            auto contextSubs = resolvedToType->getContextSubstitutionMap();
+            auto replacements = contextSubs.getReplacementTypes();
+            auto lookupConformanceFn =
+                [&](InFlightSubstitution &IFS, Type original,
+                    ProtocolDecl *proto) -> ProtocolConformanceRef {
+              auto replacement = original.subst(IFS);
+              return lookupConformance(replacement, proto, /*allowMissing=*/true);
+            };
+            subs = SubstitutionMap::get(sig, replacements, lookupConformanceFn);
+            if (subs)
+              declRef = ConcreteDeclRef(decl, subs);
+          }
+        }
+        if (subs)
+          initType = gft->substGenericArgs(subs);
+      } else if (declRef.getSubstitutions()) {
         initType = initType.subst(declRef.getSubstitutions());
+      }
 
       auto *ctorRefExpr =
           new (ctx) DeclRefExpr(declRef, DeclNameLoc(), /*Implicit=*/true);
       ctorRefExpr->setType(initType);
 
-      auto *typeExpr = TypeExpr::createImplicit(toType, ctx);
+      auto *typeExpr = TypeExpr::createImplicit(resolvedToType, ctx);
       auto *innerCall = ConstructorRefCallExpr::create(
           ctx, ctorRefExpr, typeExpr,
           initType->castTo<FunctionType>()->getResult());
       cs.cacheExprTypes(innerCall);
 
-      auto *argList =
-          ArgumentList::forImplicitUnlabeled(ctx, {cs.coerceToRValue(expr)});
-      auto *outerCall = CallExpr::createImplicit(ctx, innerCall, argList);
-      outerCall->setType(toType);
-      cs.setType(outerCall, toType);
+      // initType is the curried interface type: (Self.Type) -> (Param) -> Result.
+      // innerCall has consumed the metatype; use the inner function type.
+      auto innerFnType = initType->castTo<FunctionType>()->getResult()
+                             ->castTo<FunctionType>();
+      Type paramType = innerFnType->getParams()[0].getParameterType();
+      Identifier argLabel = innerFnType->getParams()[0].getLabel();
+      Expr *argExpr = coerceToType(cs.coerceToRValue(expr), paramType, locator);
+      if (!argExpr)
+        return nullptr;
 
-      return outerCall;
+      // Preserve the argument label from the init declaration.
+      auto *argList = ArgumentList::forImplicitSingle(ctx, argLabel, argExpr);
+      auto *outerCall = CallExpr::createImplicit(ctx, innerCall, argList);
+
+      // A failable init? returns Optional<T>. Force-unwrap it to produce the
+      // non-optional resolvedToType. The user has opted into this crash-on-nil
+      // behaviour by marking the init @implicit.
+      Expr *result = outerCall;
+      if (decl->isFailable()) {
+        Type optionalResultType = OptionalType::get(resolvedToType);
+        outerCall->setType(optionalResultType);
+        cs.setType(outerCall, optionalResultType);
+        result = new (ctx) ForceValueExpr(outerCall, outerCall->getEndLoc(),
+                                          /*isImplicit=*/true);
+        cs.setType(result, resolvedToType);
+      } else {
+        outerCall->setType(resolvedToType);
+        cs.setType(outerCall, resolvedToType);
+      }
+
+      return result;
     }
     }
   }
