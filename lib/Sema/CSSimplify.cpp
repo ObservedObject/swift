@@ -6034,13 +6034,10 @@ bool ConstraintSystem::repairFailures(
   // argument-to-parameter mismatch — the two most common sites where an
   // implicit conversion should transparently apply.
   //
-  // NOTE: This check is intentionally placed inside repairFailures() rather
-  // than in the primary matchTypes() flow. That means the @implicit init lookup
-  // only ever runs when the type checker has already determined there is a type
-  // mismatch — it has zero overhead on code where types match normally, which
-  // is the vast majority of code. This directly addresses the concern that
-  // user-defined implicit conversions could slow down type checking: the cost
-  // is strictly bounded to the error-recovery path that would be entered anyway.
+  // NOTE: This check in repairFailures() is a fallback for any locator paths
+  // not reached by the primary matchTypes() check added below the special
+  // implicit nominal conversions.  hasAnyRestriction() prevents a duplicate
+  // UserDefined restriction when the primary check already added one.
   {
     if (!hasAnyRestriction() && matchKind >= ConstraintKind::Subtype) {
       Type resolvedToType = rhs;
@@ -8390,6 +8387,43 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
       } else if (isSetType(desugar1) && isSetType(desugar2)) {
         conversionsOrFixes.push_back(
           ConversionRestrictionKind::SetUpcast);
+      }
+    }
+
+    // User-defined implicit conversions via @implicit-annotated initializers.
+    // This check runs in the primary solve path so that the solver finds
+    // @implicit conversions on the first pass without entering salvage.
+    // Salvage would otherwise trigger CrashOnValidSalvage for clean code
+    // containing closures (where the closure body constraint is resolved in
+    // the same pass as the outer expression and a valid solution is found
+    // without any fixes).  The repairFailures() copy is kept as a fallback;
+    // hasAnyRestriction() there prevents a duplicate restriction.
+    //
+    // conversionsOrFixes must be empty: @implicit conversions should not form
+    // a disjunction with structural conversions (upcast, CGFloat, etc.).  If
+    // another conversion was already found it is more specific and should win;
+    // this path is skipped and repairFailures() handles the remainder.
+    if (!type1->is<LValueType>() && conversionsOrFixes.empty() &&
+        !flags.contains(TMF_ApplyingFix)) {
+      Type resolvedToType = type2;
+      if (getImplicitConversion(type1, resolvedToType)) {
+        // Only apply the conversion when the locator refers to a concrete
+        // expression site (bare expr, ContextualType, or ApplyArgToParam).
+        // This mirrors the locatorOK guard in repairFailures().
+        SmallVector<LocatorPathElt, 4> pathBuf;
+        locator.getLocatorParts(pathBuf);
+        bool locatorOK = locator.trySimplifyToExpr() != nullptr;
+        if (!locatorOK && pathBuf.size() == 1) {
+          auto &last = pathBuf.back();
+          locatorOK = last.is<LocatorPathElt::ContextualType>() ||
+                      last.is<LocatorPathElt::ApplyArgToParam>();
+        }
+        if (locatorOK) {
+          if (!resolvedToType->isEqual(type2) && type2->hasTypeVariable())
+            addConstraint(ConstraintKind::Bind, type2, resolvedToType,
+                          getConstraintLocator(locator));
+          conversionsOrFixes.push_back(ConversionRestrictionKind::UserDefined);
+        }
       }
     }
   }

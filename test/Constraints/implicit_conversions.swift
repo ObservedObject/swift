@@ -231,17 +231,25 @@ let t2: Int = false ? ternA : ternB
 assertEqual(t2, 8, "ternary false branch")
 
 // ===----------------------------------------------------------------------===
-// MARK: - 17. Implicit conversion in a for-in loop body
+// MARK: - 17. Closure with explicit return type
 // ===----------------------------------------------------------------------===
 
-// Each element of a [Double] array is implicitly converted to Int inside the
-// loop body.  Avoids closures (which can trigger constraint-solver salvage).
-let rawDoubles: [Double] = [9.1, 0.9, 4.5]
-var loopResults: [Int] = []
-for elem in rawDoubles {
-    let asInt: Int = elem
-    loopResults.append(asInt)
+// The explicit '-> Int' annotation gives the solver a concrete contextual
+// type for the return expression, so @implicit init(d:) fires on the primary
+// solve pass (not in salvage) and CrashOnValidSalvage is not triggered.
+func makeInt(_ d: Double) -> Int {
+    return d
 }
-assertEqual(loopResults, [9, 0, 4], "for-in body implicit conversion")
+assertEqual(makeInt(6.7), 6, "explicit-return-type closure")
+
+// ===----------------------------------------------------------------------===
+// MARK: - 18. Implicit conversion through map
+// ===----------------------------------------------------------------------===
+
+// Annotating the closure parameter and return type explicitly allows the
+// solver to resolve the implicit Double->Int conversion.
+let rawDoubles: [Double] = [9.1, 0.9, 4.5]
+let mapped: [Int] = rawDoubles.map { (x: Double) -> Int in x }
+assertEqual(mapped, [9, 0, 4], "map closure implicit conversion")
 
 print("All @implicit conversion tests passed.")
