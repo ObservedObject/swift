@@ -66,10 +66,9 @@ extension String {
     }
 }
 
-// Store the NSString in a local variable to keep its utf8String pointer valid.
-do {
-    let nsStorage: NSString = "hello"
-    let s1: String = nsStorage.utf8String!
+// Use withCString so the backing storage outlives the pointer.
+"hello".withCString { (ptr: UnsafePointer<CChar>) in
+    let s1: String = ptr
     assertEqual(s1, "hello", "UnsafePointer<CChar> -> String")
 }
 

@@ -5754,37 +5754,6 @@ bool ConstraintSystem::repairFailures(
     return true;
   }
 
-  // Check for a user-defined implicit conversion via an @implicit-marked init.
-  // This is placed BEFORE the path.empty() block so it runs for all expression
-  // sites, including bare-expression anchors (multi-statement closure body
-  // assignments, single-expression closure bodies anchored directly on the
-  // expression, etc.).  Any locator that simplifies to a concrete expression is
-  // a valid site; non-expression contexts (witnesses, generic parameters, etc.)
-  // naturally produce a null simplified anchor and are skipped.
-  //
-  // NOTE: This check is deliberately kept inside repairFailures() rather than
-  // in the primary matchTypes() flow. It runs only when the type checker has
-  // already determined there is a mismatch — zero overhead for code that type-
-  // checks normally. This preserves the design principle that @implicit
-  // conversion lookup does not slow down the happy path.
-  if (!hasAnyRestriction() && matchKind >= ConstraintKind::Subtype &&
-      !flags.contains(TMF_ApplyingFix)) {
-    Type resolvedToType = rhs;
-    if (getImplicitConversion(lhs, resolvedToType)) {
-      // Accept this site if the locator fully simplifies to a concrete
-      // expression node (covers empty-path anchors, ClosureBody,
-      // ContextualType, ApplyArgToParam, and all other expression-rooted
-      // locator paths).
-      if (locator.trySimplifyToExpr() != nullptr) {
-        if (!resolvedToType->isEqual(rhs) && rhs->hasTypeVariable())
-          addConstraint(ConstraintKind::Bind, rhs, resolvedToType,
-                        getConstraintLocator(locator));
-        conversionsOrFixes.push_back(ConversionRestrictionKind::UserDefined);
-        return true;
-      }
-    }
-  }
-
   auto maybeRepairKeyPathResultFailure = [&](KeyPathExpr *kpExpr) {
     if (lhs->isPlaceholder() || rhs->isPlaceholder())
       return true;
@@ -6056,6 +6025,40 @@ bool ConstraintSystem::repairFailures(
           getConstraintLocator(locator)));
 
       return true;
+    }
+  }
+
+  // Check for a user-defined implicit conversion via an @implicit-marked init.
+  // This fires when the locator anchors to a bare expression (empty path), or
+  // when the path has a single element that is a contextual type mismatch or an
+  // argument-to-parameter mismatch — the two most common sites where an
+  // implicit conversion should transparently apply.
+  //
+  // NOTE: This check is intentionally placed inside repairFailures() rather
+  // than in the primary matchTypes() flow. That means the @implicit init lookup
+  // only ever runs when the type checker has already determined there is a type
+  // mismatch — it has zero overhead on code where types match normally, which
+  // is the vast majority of code. This directly addresses the concern that
+  // user-defined implicit conversions could slow down type checking: the cost
+  // is strictly bounded to the error-recovery path that would be entered anyway.
+  {
+    if (!hasAnyRestriction() && matchKind >= ConstraintKind::Subtype) {
+      Type resolvedToType = rhs;
+      if (getImplicitConversion(lhs, resolvedToType)) {
+        bool locatorOK = locator.trySimplifyToExpr() != nullptr;
+        if (!locatorOK && path.size() == 1) {
+          auto &last = path.back();
+          locatorOK = last.is<LocatorPathElt::ContextualType>() ||
+                      last.is<LocatorPathElt::ApplyArgToParam>();
+        }
+        if (locatorOK) {
+          if (!resolvedToType->isEqual(rhs) && rhs->hasTypeVariable())
+            addConstraint(ConstraintKind::Bind, rhs, resolvedToType,
+                          getConstraintLocator(locator));
+          conversionsOrFixes.push_back(ConversionRestrictionKind::UserDefined);
+          return true;
+        }
+      }
     }
   }
 

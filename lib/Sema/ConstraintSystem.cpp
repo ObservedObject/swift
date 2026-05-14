@@ -2085,18 +2085,24 @@ SolutionResult ConstraintSystem::salvage() {
 
       if (getASTContext().TypeCheckerOpts.CrashOnValidSalvage) {
         auto &solution = viable[0];
-        if (solution.Fixes.empty() &&
+        // Don't crash if the solution uses an @implicit user-defined conversion.
+        // Such solutions are legitimately found in salvage() because the check
+        // lives in repairFailures() deliberately (to avoid overhead on the
+        // primary solve path). Check ConstraintRestrictions directly rather
+        // than the score, since the score may not propagate outward through
+        // nested conjunctions (e.g. multi-statement closures).
+        bool hasUserDefinedConversion = llvm::any_of(
+            solution.ConstraintRestrictions,
+            [](const auto &entry) {
+              return entry.second == ConversionRestrictionKind::UserDefined;
+            });
+        if (!hasUserDefinedConversion &&
+            solution.Fixes.empty() &&
             diagnosticTransaction == nullptr &&
             !getASTContext().LangOpts.DisableAvailabilityChecking &&
             solution.getFixedScore().Data[SK_Unavailable] == 0 &&
             solution.getFixedScore().Data[SK_Hole] == 0 &&
-            solution.getFixedScore().Data[SK_Fix] == 0 &&
-            // A solution found via an @implicit user-defined conversion is
-            // legitimately valid even when discovered in salvage(); the
-            // conversion check lives in repairFailures() (before the
-            // path.empty() block) so such solutions always appear here.
-            // Don't crash for them.
-            solution.getFixedScore().Data[SK_ImplicitValueConversion] == 0) {
+            solution.getFixedScore().Data[SK_Fix] == 0) {
           ABORT([&](auto &out) {
             out << "Found valid solution in salvage()\n\n";
             solution.dump(out, 0);
