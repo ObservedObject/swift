@@ -2093,9 +2093,9 @@ SolutionResult ConstraintSystem::salvage() {
             solution.getFixedScore().Data[SK_Fix] == 0 &&
             // A solution found via an @implicit user-defined conversion is
             // legitimately valid even when discovered in salvage(); the
-            // conversion is tried on both the primary solve path and in
-            // repairFailures(), so solutions using it carry a non-zero
-            // SK_ImplicitValueConversion score. Don't crash for them.
+            // conversion check lives in repairFailures() deliberately (to
+            // avoid overhead on the primary solve path) so such solutions
+            // always appear here. Don't crash for them.
             solution.getFixedScore().Data[SK_ImplicitValueConversion] == 0) {
           ABORT([&](auto &out) {
             out << "Found valid solution in salvage()\n\n";
