@@ -34,6 +34,18 @@ using namespace swift;
 
 namespace {
 
+static std::optional<DeclAttrKind>
+getConditionalDeclAttrModifierKind(const Token &tok) {
+  if (tok.isEscapedIdentifier())
+    return std::nullopt;
+
+  auto kind = DeclAttribute::getAttrKindFromString(tok.getText());
+  return kind && DeclAttribute::isDeclModifier(*kind) &&
+                 kind != DeclAttrKind::Actor
+             ? kind
+             : std::nullopt;
+}
+
 /// Get PlatformConditionKind from platform condition name.
 static std::optional<PlatformConditionKind>
 getPlatformConditionKind(StringRef Name) {
@@ -1004,16 +1016,24 @@ ParserStatus Parser::parseIfConfig(
 ParserStatus Parser::parseIfConfigAttributes(
     DeclAttributes &attributes, bool ifConfigsAreDeclAttrs) {
   ParserStatus status = makeParserSuccess();
+  auto parseConditionalAttrsAndModifiers = [&](DeclAttributes &attributes) {
+    status |= parseDeclAttributeList(attributes, ifConfigsAreDeclAttrs);
+    while (auto kind = getConditionalDeclAttrModifierKind(Tok)) {
+      if (Tok.is(tok::identifier))
+        Tok.setKind(tok::contextual_keyword);
+      status |= parseNewDeclAttribute(attributes, {}, *kind);
+    }
+  };
+
   return parseIfConfigRaw<ParserStatus>(
       IfConfigContext::DeclAttrs,
       [&](SourceLoc clauseLoc, Expr *condition, bool isActive,
           IfConfigElementsRole role) {
         if (isActive) {
-          status |= parseDeclAttributeList(attributes, ifConfigsAreDeclAttrs);
+          parseConditionalAttrsAndModifiers(attributes);
         } else if (role != IfConfigElementsRole::Skipped) {
           DeclAttributes skippedAttributes;
-          status |= parseDeclAttributeList(
-              skippedAttributes, ifConfigsAreDeclAttrs);
+          parseConditionalAttrsAndModifiers(skippedAttributes);
         }
       },
       [&](SourceLoc endLoc, bool hadMissingEnd) {
@@ -1034,6 +1054,17 @@ bool Parser::skipIfConfigOfAttributes(bool &sawAnyAttributes) {
       if (Tok.is(tok::at_sign)) {
         sawAnyAttributes = true;
         skipAnyAttribute();
+        continue;
+      }
+
+      if (auto kind = getConditionalDeclAttrModifierKind(Tok)) {
+        sawAnyAttributes = true;
+        consumeToken();
+        if (Tok.is(tok::l_paren)) {
+          consumeToken();
+          skipUntil(tok::r_paren);
+          consumeIf(tok::r_paren);
+        }
         continue;
       }
 

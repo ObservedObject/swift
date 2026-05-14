@@ -37,6 +37,30 @@ func f() async {
 
 typealias WeirdC = RequiresSendable<C> // okay
 
+nonisolated(unsafe) struct UnsafeCounterBox {
+  var count = 0
+  static var sharedText = ""
+}
+
+func testTypeScopedNonisolatedUnsafe(_ box: UnsafeCounterBox) {
+  // expected-warning@+1{{expression uses unsafe constructs but is not marked with 'unsafe'}}{{3-3=unsafe }}
+  print(box.count) // expected-note{{reference to nonisolated(unsafe) property 'count' is unsafe in concurrently-executing code}}
+  // expected-warning@+1{{expression uses unsafe constructs but is not marked with 'unsafe'}}{{3-3=unsafe }}
+  print(UnsafeCounterBox.sharedText) // expected-note{{reference to nonisolated(unsafe) static property 'sharedText' is unsafe in concurrently-executing code}}
+}
+
+#if compiler(>=6.0)
+nonisolated(unsafe)
+#endif
+struct ConditionalUnsafeCounterBox {
+  static var sharedText = ""
+}
+
+func testConditionalTypeScopedNonisolatedUnsafe() {
+  // expected-warning@+1{{expression uses unsafe constructs but is not marked with 'unsafe'}}{{3-3=unsafe }}
+  print(ConditionalUnsafeCounterBox.sharedText) // expected-note{{reference to nonisolated(unsafe) static property 'sharedText' is unsafe in concurrently-executing code}}
+}
+
 
 @available(SwiftStdlib 5.9, *)
 final class MyExecutor: SerialExecutor {

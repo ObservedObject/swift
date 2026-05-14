@@ -8346,9 +8346,11 @@ void AttributeChecker::visitNonisolatedAttr(NonisolatedAttr *attr) {
   }
 
   if (auto VD = dyn_cast<ValueDecl>(D)) {
-    //'nonisolated(unsafe)' is meaningless for computed properties, functions etc.
+    //'nonisolated(unsafe)' is meaningful for stored variables and as a scoped
+    // default on nominal types and extensions.
     auto var = dyn_cast<VarDecl>(VD);
-    if (attr->isUnsafe() &&
+    if (attr->isUnsafe() && !attr->isImplicit() &&
+        !isa<NominalTypeDecl>(D) && !isa<ExtensionDecl>(D) &&
         (!var || !var->hasStorage())) {
       auto &ctx = VD->getASTContext();
       ctx.Diags

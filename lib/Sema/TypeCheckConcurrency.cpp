@@ -6596,14 +6596,16 @@ static InferredActorIsolation computeActorIsolation(Evaluator &evaluator,
     case ActorIsolation::Nonisolated:
     case ActorIsolation::NonisolatedConcurrent:
     case ActorIsolation::NonisolatedUnsafe:
-      // Stored properties cannot be non-isolated, so don't infer it.
+      // Stored properties cannot infer safe nonisolated, but a scoped
+      // `nonisolated(unsafe)` default should attach to them.
       if (auto var = dyn_cast<VarDecl>(value)) {
-        if (!var->isStatic() && var->hasStorage())
+        if (!var->isStatic() && var->hasStorage() &&
+            inferred != ActorIsolation::NonisolatedUnsafe)
           return ActorIsolation::forUnspecified().withPreconcurrency(
               inferred.preconcurrency());
       }
 
-      if (onlyGlobal) {
+      if (onlyGlobal && inferred != ActorIsolation::NonisolatedUnsafe) {
         return ActorIsolation::forUnspecified().withPreconcurrency(
             inferred.preconcurrency());
       }
