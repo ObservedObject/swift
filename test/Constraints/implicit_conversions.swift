@@ -203,4 +203,48 @@ func checkStillInScope() {
 }
 checkStillInScope()
 
+// ===----------------------------------------------------------------------===
+// MARK: - 15. Optional destination — conversion + Optional injection
+// ===----------------------------------------------------------------------===
+
+// When toType is Int?, getImplicitConversion strips the optional to find
+// @implicit init(d:), then CSApply re-injects the result into Int? via the
+// originalToType preservation fix.
+let dbl2: Double = 2.5
+let maybeInt: Int? = dbl2
+precondition(maybeInt == 2, "optional destination")
+
+// ===----------------------------------------------------------------------===
+// MARK: - 16. Ternary operator context
+// ===----------------------------------------------------------------------===
+
+// Contextual type Int propagates to both branches; each Double is converted.
+let tBool = true
+let t1: Int = tBool ? 1.5 : 2.5
+assertEqual(t1, 1, "ternary true branch")
+let t2: Int = tBool ? 7.9 : 8.3
+assertEqual(t2, 7, "ternary - only taken branch")
+
+// ===----------------------------------------------------------------------===
+// MARK: - 17. Closure with explicit return type
+// ===----------------------------------------------------------------------===
+
+// The explicit '-> Int' annotation lets the solver apply the implicit
+// conversion inside the closure body.
+let makeIntFn: () -> Int = { () -> Int in
+    let x: Double = 6.7
+    return x
+}
+assertEqual(makeIntFn(), 6, "closure explicit return type")
+
+// ===----------------------------------------------------------------------===
+// MARK: - 18. Implicit conversion through map
+// ===----------------------------------------------------------------------===
+
+// Annotating the closure parameter and return type explicitly ensures the
+// solver resolves the implicit Double->Int conversion in the body.
+let rawDoubles: [Double] = [9.1, 0.9, 4.5]
+let mapped: [Int] = rawDoubles.map { (x: Double) -> Int in x }
+assertEqual(mapped, [9, 0, 4], "map closure implicit conversion")
+
 print("All @implicit conversion tests passed.")
