@@ -7426,6 +7426,9 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
     }
 
     case ConversionRestrictionKind::UserDefined: {
+      // Save the originally-requested type before getImplicitConversion strips
+      // optional wrapping from it (via lookThroughAllOptionalTypes()).
+      Type originalToType = toType;
       Type resolvedToType = toType;
       auto *decl = cs.getImplicitConversion(fromType, resolvedToType);
       if (!decl)
@@ -7438,16 +7441,25 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
       if (!declRef.getSubstitutions()) {
         if (auto sig = decl->getInnermostDeclContext()
                            ->getGenericSignatureOfContext()) {
+          bool allConformancesSatisfied = true;
           auto subs = SubstitutionMap::get(
               sig,
               resolvedToType->getContextSubstitutionMap().getReplacementTypes(),
               [&](InFlightSubstitution &IFS, Type original,
                   ProtocolDecl *proto) -> ProtocolConformanceRef {
-                return lookupConformance(original.subst(IFS), proto,
-                                         /*allowMissing=*/true);
+                // Short-circuit once we know the conversion is inapplicable.
+                if (!allConformancesSatisfied)
+                  return ProtocolConformanceRef();
+                auto conformance =
+                    lookupConformance(original.subst(IFS), proto,
+                                     /*allowMissing=*/false);
+                if (conformance.isInvalid())
+                  allConformancesSatisfied = false;
+                return conformance;
               });
-          if (subs)
-            declRef = ConcreteDeclRef(decl, subs);
+          if (!subs || !allConformancesSatisfied)
+            return nullptr;
+          declRef = ConcreteDeclRef(decl, subs);
         }
       }
 
@@ -7496,6 +7508,12 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
         outerCall->setType(resolvedToType);
         cs.setType(outerCall, resolvedToType);
       }
+
+      // getImplicitConversion strips optional wrapping from toType into
+      // resolvedToType. If the originally-requested type had more optional
+      // layers, re-coerce to reinject the result into the right wrapper.
+      if (!resolvedToType->isEqual(originalToType))
+        result = coerceToType(result, originalToType, locator);
 
       return result;
     }

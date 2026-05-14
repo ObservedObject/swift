@@ -1,6 +1,7 @@
 // RUN: %target-typecheck-verify-swift
 // RUN: %target-run-simple-swift
 // REQUIRES: executable_test
+// REQUIRES: objc_interop
 
 // ===----------------------------------------------------------------------===
 // Tests for @implicit user-defined implicit conversions (SE-XXXX).
@@ -65,14 +66,11 @@ extension String {
     }
 }
 
-// Use a helper that returns a plain non-optional, non-IUO pointer to avoid
-// IUO disjunction interactions with other @implicit inits defined below.
-func nonOptionalCString() -> UnsafePointer<CChar> {
-    return ("hello" as NSString).utf8String!
+// Use withCString so the backing storage outlives the pointer.
+"hello".withCString { (ptr: UnsafePointer<CChar>) in
+    let s1: String = ptr
+    assertEqual(s1, "hello", "UnsafePointer<CChar> -> String")
 }
-
-let s1: String = nonOptionalCString()
-assertEqual(s1, "hello", "UnsafePointer<CChar> -> String")
 
 // ===----------------------------------------------------------------------===
 // MARK: - 5. Optional source type via a dedicated @implicit init
@@ -89,7 +87,7 @@ struct SafeString {
 // strerror(0) returns UnsafeMutablePointer<CChar>? (IUO).
 // Our init takes the optional directly, so the optional branch is used.
 let ss: SafeString = strerror(0)
-assert(!ss.value.isEmpty, "optional-source init chosen")
+precondition(!ss.value.isEmpty, "optional-source init chosen")
 
 // ===----------------------------------------------------------------------===
 // MARK: - 6. Failable init — succeeds on non-nil input

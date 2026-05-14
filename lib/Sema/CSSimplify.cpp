@@ -5325,6 +5325,12 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
         ctor->isInvalid())
       return 0;
 
+    // Reject effectful initializers: the synthesized call site has no
+    // try/await, so applying a throwing or async @implicit init would be
+    // unsound.
+    if (ctor->hasThrows() || ctor->hasAsync())
+      return 0;
+
     auto *params = ctor->getParameters();
     if (!params || params->size() != 1)
       return 0;
@@ -5387,6 +5393,26 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
           LookUpConformanceInModule());
     };
 
+    // Returns true if the derived substitutions satisfy the initializer's
+    // full generic signature (including where-clause requirements).
+    auto checkGenericRequirements = [&]() -> bool {
+      if (substitutions.empty())
+        return true;
+      auto sig =
+          ctor->getInnermostDeclContext()->getGenericSignatureOfContext();
+      if (!sig)
+        return true;
+      // Use no extra SubstOptions (std::nullopt = no flags).
+      auto result = checkRequirements(
+          sig.getRequirements(),
+          [&](SubstitutableType *type) -> Type {
+            auto found = substitutions.find(type->getCanonicalType());
+            return found != substitutions.end() ? found->second : Type();
+          },
+          SubstOptions(std::nullopt));
+      return result == CheckRequirementsResult::Success;
+    };
+
     TypeParameterBinder binder{substitutions};
 
     // First try binding result -> toType (the normal case where toType is
@@ -5407,10 +5433,14 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
           return 0;
       }
       if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
+        if (!checkGenericRequirements())
+          return 0;
         outInferredToType = resultType;
         return 2;
       }
       if (paramType->getCanonicalType() == fromCanType) {
+        if (!checkGenericRequirements())
+          return 0;
         outInferredToType = resultType;
         return 1;
       }
@@ -5424,6 +5454,8 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     }
 
     if (paramType->getCanonicalType() == fromCanType) {
+      if (!checkGenericRequirements())
+        return 0;
       outInferredToType = toType;
       return 1;
     }
