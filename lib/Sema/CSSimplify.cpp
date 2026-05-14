@@ -5299,8 +5299,7 @@ static bool repairOutOfOrderArgumentsInBinaryFunction(
 /// \return true if at least some of the failures has been repaired
 /// successfully, which allows type matcher to continue.
 ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
-                                                         Type toType,
-                                                         Type &inferredToType) {
+                                                         Type &toType) {
   // Simplify but do NOT strip optionals yet — an @implicit init may explicitly
   // accept an optional (e.g. `init(str: UnsafeMutablePointer<CChar>?)`), and
   // that should be preferred over one that accepts the unwrapped type.
@@ -5318,20 +5317,28 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   auto fromCanType = fromType->getCanonicalType();
   auto fromCanTypeWithOptional = fromTypeWithOptional->getCanonicalType();
 
-  auto matches = [&](Decl *member) -> ConstructorDecl * {
+  // Returns 0 (no match), 1 (stripped match), or 2 (exact optional match).
+  // Higher priority wins, allowing a single pass to find the best candidate.
+  auto matchPriority = [&](Decl *member, Type &outInferredToType) -> int {
     auto *ctor = dyn_cast<ConstructorDecl>(member);
     if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
         ctor->isInvalid())
-      return nullptr;
+      return 0;
 
     auto *params = ctor->getParameters();
     if (!params || params->size() != 1)
-      return nullptr;
+      return 0;
 
     Type resultType = ctor->getResultInterfaceType();
     Type paramType = params->get(0)->getInterfaceType();
     if (!resultType || !paramType)
-      return nullptr;
+      return 0;
+
+    // Quick exact-optional check before attempting generic binding.
+    if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
+      outInferredToType = toType;
+      return 2;
+    }
 
     llvm::DenseMap<CanType, Type> substitutions;
     struct TypeParameterBinder {
@@ -5346,7 +5353,6 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
           auto existing = substitutions.find(key);
           if (existing != substitutions.end())
             return existing->second->isEqual(actual);
-
           substitutions[key] = actual;
           return true;
         }
@@ -5363,14 +5369,22 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
         auto patternArgs = patternGeneric->getGenericArgs();
         auto actualArgs = actualGeneric->getGenericArgs();
         if (patternArgs.size() != actualArgs.size())
-            return false;
+          return false;
 
         for (auto idx : indices(patternArgs))
           if (!bind(patternArgs[idx], actualArgs[idx]))
             return false;
-
         return true;
       }
+    };
+
+    auto applySubsts = [&](Type t) -> Type {
+      return t.subst(
+          [&](SubstitutableType *type) -> Type {
+            auto found = substitutions.find(type->getCanonicalType());
+            return found == substitutions.end() ? Type() : found->second;
+          },
+          LookUpConformanceInModule());
     };
 
     TypeParameterBinder binder{substitutions};
@@ -5378,109 +5392,78 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     // First try binding result -> toType (the normal case where toType is
     // fully concrete, e.g. `let a: Array<Int> = someSet`).
     // If toType contains free type variables (e.g. `let a: Array = someSet`),
-    // fall back to binding paramType -> fromType and then substitute into
-    // resultType to discover the concrete toType.
+    // fall back to binding paramType -> fromType and substitute into both
+    // resultType and paramType to discover the concrete types.
     bool boundForward = binder.bind(resultType, toType) &&
                         !toType->hasTypeVariable();
     if (!boundForward) {
       substitutions.clear();
       if (!binder.bind(paramType, fromType))
-        return nullptr;
+        return 0;
       if (!substitutions.empty()) {
-        auto applySubsts = [&](Type t) -> Type {
-          return t.subst(
-              [&](SubstitutableType *type) -> Type {
-                auto found = substitutions.find(type->getCanonicalType());
-                if (found == substitutions.end())
-                  return Type();
-                return found->second;
-              },
-              LookUpConformanceInModule());
-        };
-        // Substitute into both resultType (to get the concrete toType, e.g.
-        // Array<Int>) and paramType (to compare against fromType correctly).
         resultType = applySubsts(resultType);
         paramType = applySubsts(paramType);
         if (!resultType || !paramType)
-          return nullptr;
+          return 0;
       }
       if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
-        inferredToType = resultType;
-        return ctor;
+        outInferredToType = resultType;
+        return 2;
       }
       if (paramType->getCanonicalType() == fromCanType) {
-        inferredToType = resultType;
-        return ctor;
+        outInferredToType = resultType;
+        return 1;
       }
-      return nullptr;
+      return 0;
     }
 
     if (!substitutions.empty()) {
-      paramType = paramType.subst(
-          [&](SubstitutableType *type) -> Type {
-            auto found = substitutions.find(type->getCanonicalType());
-            if (found == substitutions.end())
-              return Type();
-            return found->second;
-          },
-          LookUpConformanceInModule());
+      paramType = applySubsts(paramType);
       if (!paramType)
-        return nullptr;
-    }
-
-    // Match against fromCanType (optional-stripped). The two-pass search above
-    // already tried an exact optional match via matchesExact, so here we only
-    // need the stripped comparison as a fallback.
-    if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
-      inferredToType = toType;
-      return ctor;
+        return 0;
     }
 
     if (paramType->getCanonicalType() == fromCanType) {
-      inferredToType = toType;
-      return ctor;
+      outInferredToType = toType;
+      return 1;
     }
 
-    return nullptr;
+    return 0;
   };
 
-  // Two-pass search: first prefer an init whose parameter type matches the
-  // source type *including* any optionality (e.g. `init(x: T?)` wins over
-  // `init(_ x: T)` when the source is `T?`). Only if nothing matches exactly
-  // do we fall back to the optional-stripped fromCanType.
-  auto matchesExact = [&](Decl *member) -> ConstructorDecl * {
-    auto *ctor = dyn_cast<ConstructorDecl>(member);
-    if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
-        ctor->isInvalid())
-      return nullptr;
-    auto *params = ctor->getParameters();
-    if (!params || params->size() != 1)
-      return nullptr;
-    Type pt = params->get(0)->getInterfaceType();
-    if (!pt)
-      return nullptr;
-    return pt->getCanonicalType() == fromCanTypeWithOptional ? ctor : nullptr;
+  // Single pass over members and extensions, tracking the highest-priority
+  // match (2 = exact optional, 1 = stripped). Stop early on priority 2.
+  ConstructorDecl *best = nullptr;
+  int bestPriority = 0;
+  Type bestInferredToType;
+
+  auto consider = [&](Decl *member) {
+    Type inferredToType;
+    int priority = matchPriority(member, inferredToType);
+    if (priority > bestPriority) {
+      bestPriority = priority;
+      best = cast<ConstructorDecl>(member);
+      bestInferredToType = inferredToType;
+    }
   };
 
-  for (auto *member : toNominal->getMembers())
-    if (auto *ctor = matchesExact(member))
-      return ctor;
+  for (auto *member : toNominal->getMembers()) {
+    consider(member);
+    if (bestPriority == 2) break;
+  }
+  if (bestPriority < 2) {
+    for (auto *extension : toNominal->getExtensions()) {
+      for (auto *member : extension->getMembers()) {
+        consider(member);
+        if (bestPriority == 2) break;
+      }
+      if (bestPriority == 2) break;
+    }
+  }
 
-  for (auto *extension : toNominal->getExtensions())
-    for (auto *member : extension->getMembers())
-      if (auto *ctor = matchesExact(member))
-        return ctor;
-
-  for (auto *member : toNominal->getMembers())
-    if (auto *ctor = matches(member))
-      return ctor;
-
-  for (auto *extension : toNominal->getExtensions())
-    for (auto *member : extension->getMembers())
-      if (auto *ctor = matches(member))
-        return ctor;
-
-  return nullptr;
+  if (best)
+    toType = bestInferredToType;
+  return best;
 }
 
 bool ConstraintSystem::repairFailures(
@@ -6027,26 +6010,22 @@ bool ConstraintSystem::repairFailures(
   // user-defined implicit conversions could slow down type checking: the cost
   // is strictly bounded to the error-recovery path that would be entered anyway.
   {
-    Type inferredToType;
-    if (!hasAnyRestriction() && matchKind >= ConstraintKind::Subtype &&
-        getImplicitConversion(lhs, rhs, inferredToType)) {
-      bool locatorOK = locator.trySimplifyToExpr() != nullptr;
-      if (!locatorOK && path.size() == 1) {
-        auto &last = path.back();
-        locatorOK = last.is<LocatorPathElt::ContextualType>() ||
-                    last.is<LocatorPathElt::ApplyArgToParam>();
-      }
-      if (locatorOK) {
-        // If the init inferred a concrete toType (e.g. Array<Int> from a
-        // Set<Int> source), bind the rhs type variable to it now so the
-        // rest of the constraint system sees the resolved type.
-        if (inferredToType && !inferredToType->isEqual(rhs) &&
-            rhs->hasTypeVariable()) {
-          addConstraint(ConstraintKind::Bind, rhs, inferredToType,
-                        getConstraintLocator(locator));
+    if (!hasAnyRestriction() && matchKind >= ConstraintKind::Subtype) {
+      Type resolvedToType = rhs;
+      if (getImplicitConversion(lhs, resolvedToType)) {
+        bool locatorOK = locator.trySimplifyToExpr() != nullptr;
+        if (!locatorOK && path.size() == 1) {
+          auto &last = path.back();
+          locatorOK = last.is<LocatorPathElt::ContextualType>() ||
+                      last.is<LocatorPathElt::ApplyArgToParam>();
         }
-        conversionsOrFixes.push_back(ConversionRestrictionKind::UserDefined);
-        return true;
+        if (locatorOK) {
+          if (!resolvedToType->isEqual(rhs) && rhs->hasTypeVariable())
+            addConstraint(ConstraintKind::Bind, rhs, resolvedToType,
+                          getConstraintLocator(locator));
+          conversionsOrFixes.push_back(ConversionRestrictionKind::UserDefined);
+          return true;
+        }
       }
     }
   }

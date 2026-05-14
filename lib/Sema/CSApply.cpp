@@ -7426,55 +7426,36 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
     }
 
     case ConversionRestrictionKind::UserDefined: {
-      Type inferredToType;
-      auto *decl = cs.getImplicitConversion(fromType, toType, inferredToType);
+      Type resolvedToType = toType;
+      auto *decl = cs.getImplicitConversion(fromType, resolvedToType);
       if (!decl)
         return nullptr;
 
-      // Use the concrete toType inferred by getImplicitConversion (e.g.
-      // Array<Int> when the annotation was just `Array` and the source was
-      // Set<Int>). Fall back to the original toType if nothing was inferred.
-      Type resolvedToType = inferredToType ? inferredToType : toType;
-
+      // resolveConcreteDeclRef looks up opened types by locator; since
+      // @implicit inits are not opened via normal overload resolution, subs
+      // may be empty for generic inits. Derive them from resolvedToType.
       auto declRef = resolveConcreteDeclRef(decl, locator);
-      Type initType = declRef.getDecl()->getInterfaceType();
-      if (auto *gft = initType->getAs<GenericFunctionType>()) {
-        // initType is a GenericFunctionType when the init is in a generic or
-        // constrained-extension context. We must use substGenericArgs() rather
-        // than plain subst() (which asserts on GenericFunctionType).
-        // resolveConcreteDeclRef looks up opened types by locator; since the
-        // @implicit init was not opened through normal overload resolution,
-        // that lookup returns empty. Instead build the substitution map
-        // directly from the constructor's generic signature using the concrete
-        // types we already know: resolvedToType supplies the Self substitution
-        // (e.g. Wrapper<Int> -> T=Int), and conformances are looked up normally.
-        SubstitutionMap subs = declRef.getSubstitutions();
-        if (!subs) {
-          auto *dc = decl->getInnermostDeclContext();
-          auto sig = dc->getGenericSignatureOfContext();
-          if (sig) {
-            // Build the substitution map over the constructor's full generic
-            // signature. We derive replacement types from resolvedToType's
-            // context substitution map (e.g. Wrapper<Int> -> T=Int) and look
-            // up conformances in the decl's parent module.
-            auto contextSubs = resolvedToType->getContextSubstitutionMap();
-            auto replacements = contextSubs.getReplacementTypes();
-            auto lookupConformanceFn =
-                [&](InFlightSubstitution &IFS, Type original,
-                    ProtocolDecl *proto) -> ProtocolConformanceRef {
-              auto replacement = original.subst(IFS);
-              return lookupConformance(replacement, proto, /*allowMissing=*/true);
-            };
-            subs = SubstitutionMap::get(sig, replacements, lookupConformanceFn);
-            if (subs)
-              declRef = ConcreteDeclRef(decl, subs);
-          }
+      if (!declRef.getSubstitutions()) {
+        if (auto sig = decl->getInnermostDeclContext()
+                           ->getGenericSignatureOfContext()) {
+          auto subs = SubstitutionMap::get(
+              sig,
+              resolvedToType->getContextSubstitutionMap().getReplacementTypes(),
+              [&](InFlightSubstitution &IFS, Type original,
+                  ProtocolDecl *proto) -> ProtocolConformanceRef {
+                return lookupConformance(original.subst(IFS), proto,
+                                         /*allowMissing=*/true);
+              });
+          if (subs)
+            declRef = ConcreteDeclRef(decl, subs);
         }
-        if (subs)
-          initType = gft->substGenericArgs(subs);
-      } else if (declRef.getSubstitutions()) {
-        initType = initType.subst(declRef.getSubstitutions());
       }
+
+      Type initType = declRef.getDecl()->getInterfaceType();
+      if (auto *gft = initType->getAs<GenericFunctionType>())
+        initType = gft->substGenericArgs(declRef.getSubstitutions());
+      else if (declRef.getSubstitutions())
+        initType = initType.subst(declRef.getSubstitutions());
 
       auto *ctorRefExpr =
           new (ctx) DeclRefExpr(declRef, DeclNameLoc(), /*Implicit=*/true);
@@ -7486,7 +7467,7 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
           initType->castTo<FunctionType>()->getResult());
       cs.cacheExprTypes(innerCall);
 
-      // initType is the curried interface type: (Self.Type) -> (Param) -> Result.
+      // initType is curried: (Self.Type) -> (Param) -> Result.
       // innerCall has consumed the metatype; use the inner function type.
       auto innerFnType = initType->castTo<FunctionType>()->getResult()
                              ->castTo<FunctionType>();
@@ -7500,9 +7481,9 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
       auto *argList = ArgumentList::forImplicitSingle(ctx, argLabel, argExpr);
       auto *outerCall = CallExpr::createImplicit(ctx, innerCall, argList);
 
-      // A failable init? returns Optional<T>. Force-unwrap it to produce the
-      // non-optional resolvedToType. The user has opted into this crash-on-nil
-      // behaviour by marking the init @implicit.
+      // A failable init? returns Optional<T>. Force-unwrap it so the
+      // implicit conversion produces the non-optional resolvedToType.
+      // The user opts into crash-on-nil by marking the init @implicit.
       Expr *result = outerCall;
       if (decl->isFailable()) {
         Type optionalResultType = OptionalType::get(resolvedToType);

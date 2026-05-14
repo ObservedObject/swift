@@ -3187,9 +3187,10 @@ public:
                       ConstraintLocatorBuilder locator);
 
   /// Determine whether an initializer annotated with @implicit can convert a
-  /// value from the source type to the destination type.
-  ConstructorDecl *getImplicitConversion(Type fromType, Type toType,
-                                         Type &inferredToType);
+  /// value from the source type to the destination type. On success, toType
+  /// is updated to the concrete resolved destination type (e.g. Array<Int>
+  /// when the annotation was just `Array` and the source was Set<Int>).
+  ConstructorDecl *getImplicitConversion(Type fromType, Type &toType);
 
   TypeMatchResult
   matchPackTypes(PackType *pack1, PackType *pack2,
