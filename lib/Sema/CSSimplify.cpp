@@ -5298,6 +5298,234 @@ static bool repairOutOfOrderArgumentsInBinaryFunction(
 /// Attempt to repair typing failures and record fixes if needed.
 /// \return true if at least some of the failures has been repaired
 /// successfully, which allows type matcher to continue.
+ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
+                                                         Type &toType) {
+  // Simplify but do NOT strip optionals yet — an @implicit init may explicitly
+  // accept an optional (e.g. `init(str: UnsafeMutablePointer<CChar>?)`), and
+  // that should be preferred over one that accepts the unwrapped type.
+  Type fromTypeWithOptional = simplifyType(fromType)->getRValueType();
+  toType = simplifyType(toType)->getRValueType()->lookThroughAllOptionalTypes();
+  fromType = fromTypeWithOptional->lookThroughAllOptionalTypes();
+
+  if (fromType->isTypeVariableOrMember() || toType->isTypeVariableOrMember())
+    return nullptr;
+
+  auto *toNominal = toType->getAnyNominal();
+  if (!toNominal)
+    return nullptr;
+
+  auto fromCanType = fromType->getCanonicalType();
+  auto fromCanTypeWithOptional = fromTypeWithOptional->getCanonicalType();
+
+  using ImplicitConversionResult = std::pair<ConstructorDecl *, CanType>;
+  using ImplicitConversionResultCache =
+      llvm::DenseMap<CanType, ImplicitConversionResult>;
+  // The compiler is single-threaded, so a plain local static cache is
+  // sufficient here. Clear it when the ASTContext changes to avoid retaining
+  // entries across unrelated compiler invocations.
+  static const ASTContext *cachedContext = nullptr;
+  static llvm::DenseMap<const NominalTypeDecl *, ImplicitConversionResultCache>
+      implicitConversionResults;
+  if (cachedContext != &getASTContext()) {
+    implicitConversionResults.clear();
+    cachedContext = &getASTContext();
+  }
+
+  // Check the memoized result cache keyed by destination nominal, then by
+  // canonical fromType (before optional stripping) so that both priority-1
+  // and priority-2 matches are covered by a single entry.
+  auto fromCacheKey = fromCanTypeWithOptional;
+  auto &toNominalCache = implicitConversionResults[toNominal];
+  if (auto cacheIt = toNominalCache.find(fromCacheKey);
+      cacheIt != toNominalCache.end()) {
+    auto [cachedCtor, cachedToType] = cacheIt->second;
+    if (!cachedCtor)
+      return nullptr;
+    toType = cachedToType;
+    return cachedCtor;
+  }
+
+  // Try to match a single @implicit init candidate. Returns the priority of
+  // the match (2 = exact optional, 1 = stripped, 0 = no match) and sets
+  // outInferredToType on success.
+  auto matchPriority = [&](ConstructorDecl *ctor, Type &outInferredToType) -> int {
+    // Reject effectful inits: the synthesized call site has no try/await.
+    if (ctor->hasThrows() || ctor->hasAsync())
+      return 0;
+
+    Type resultType = ctor->getResultInterfaceType();
+    Type paramType = ctor->getParameters()->get(0)->getInterfaceType();
+
+    llvm::DenseMap<CanType, Type> substitutions;
+    struct TypeParameterBinder {
+      llvm::DenseMap<CanType, Type> &substitutions;
+      bool bind(Type pattern, Type actual) {
+        pattern = pattern->getCanonicalType();
+        actual = actual->getCanonicalType();
+        if (auto *gp = pattern->getAs<GenericTypeParamType>()) {
+          auto key = gp->getCanonicalType();
+          auto existing = substitutions.find(key);
+          if (existing != substitutions.end())
+            return existing->second->isEqual(actual);
+          substitutions[key] = actual;
+          return true;
+        }
+        if (pattern->isEqual(actual))
+          return true;
+        auto *pg = pattern->getAs<BoundGenericType>();
+        auto *ag = actual->getAs<BoundGenericType>();
+        if (!pg || !ag || pg->getDecl() != ag->getDecl())
+          return false;
+        auto pa = pg->getGenericArgs(), aa = ag->getGenericArgs();
+        if (pa.size() != aa.size())
+          return false;
+        for (auto idx : indices(pa))
+          if (!bind(pa[idx], aa[idx]))
+            return false;
+        return true;
+      }
+    };
+
+    auto applySubsts = [&](Type t) -> Type {
+      return t.subst(
+          [&](SubstitutableType *type) -> Type {
+            auto found = substitutions.find(type->getCanonicalType());
+            return found == substitutions.end() ? Type() : found->second;
+          },
+          LookUpConformanceInModule());
+    };
+
+    auto checkGenericRequirements = [&]() -> bool {
+      if (substitutions.empty())
+        return true;
+      auto sig = ctor->getInnermostDeclContext()->getGenericSignatureOfContext();
+      if (!sig)
+        return true;
+      auto result = checkRequirements(
+          sig.getRequirements(),
+          [&](SubstitutableType *type) -> Type {
+            auto found = substitutions.find(type->getCanonicalType());
+            return found != substitutions.end() ? found->second : Type();
+          },
+          SubstOptions(std::nullopt));
+      return result == CheckRequirementsResult::Success;
+    };
+
+    TypeParameterBinder binder{substitutions};
+
+    // At least one of toType / fromType must be concrete for binding to be
+    // meaningful.
+    assert((!toType->hasTypeVariable() || !fromType->hasTypeVariable()) &&
+           "getImplicitConversion called with two open type variables");
+
+    // Try binding result -> toType first (toType is concrete in the common
+    // case). If toType has free type variables, fall back to binding
+    // paramType -> fromType and substitute to discover the concrete types.
+    bool boundForward = binder.bind(resultType, toType) &&
+                        !toType->hasTypeVariable();
+    if (!boundForward) {
+      substitutions.clear();
+      if (!binder.bind(paramType, fromType))
+        return 0;
+      if (!substitutions.empty()) {
+        resultType = applySubsts(resultType);
+        paramType = applySubsts(paramType);
+        if (!resultType || !paramType)
+          return 0;
+      }
+      // When toType is concrete the !boundForward path was entered because
+      // binder.bind(resultType, toType) failed — e.g. for a failable init
+      // where resultType is Optional<Self> but toType is Self.  CSApply
+      // expects resolvedToType to be the non-Optional Self, so use toType.
+      // When toType had free type variables we entered here to discover the
+      // concrete type via paramType→fromType substitution; use resultType.
+      Type inferredType = toType->hasTypeVariable() ? resultType : toType;
+      if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
+        if (!checkGenericRequirements()) return 0;
+        outInferredToType = inferredType;
+        return 2;
+      }
+      if (paramType->getCanonicalType() == fromCanType) {
+        if (!checkGenericRequirements()) return 0;
+        outInferredToType = inferredType;
+        return 1;
+      }
+      return 0;
+    }
+
+    if (!substitutions.empty()) {
+      paramType = applySubsts(paramType);
+      if (!paramType)
+        return 0;
+    }
+    if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
+      if (!checkGenericRequirements()) return 0;
+      outInferredToType = toType;
+      return 2;
+    }
+    if (paramType->getCanonicalType() == fromCanType) {
+      if (!checkGenericRequirements()) return 0;
+      outInferredToType = toType;
+      return 1;
+    }
+    return 0;
+  };
+
+  // Scan all @implicit single-argument inits, tracking the highest-priority
+  // match (2 = exact optional, 1 = stripped).
+  // All candidates that match at the winning priority are collected so that
+  // ties can be diagnosed before selecting the first one.
+  SmallVector<ConstructorDecl *, 4> bestCandidates;
+  int bestPriority = 0;
+  Type bestInferredToType;
+
+  auto consider = [&](Decl *member) {
+    auto *ctor = dyn_cast<ConstructorDecl>(member);
+    if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
+        ctor->isInvalid())
+      return;
+    auto *params = ctor->getParameters();
+    if (!params || params->size() != 1)
+      return;
+    Type inferredToType;
+    int priority = matchPriority(ctor, inferredToType);
+    if (priority > bestPriority) {
+      bestPriority = priority;
+      bestCandidates.clear();
+      bestCandidates.push_back(ctor);
+      bestInferredToType = inferredToType;
+    } else if (priority > 0 && priority == bestPriority) {
+      bestCandidates.push_back(ctor);
+    }
+  };
+
+  for (auto *member : toNominal->getMembers())
+    consider(member);
+  for (auto *ext : toNominal->getExtensions())
+    for (auto *member : ext->getMembers())
+      consider(member);
+
+  if (bestCandidates.empty()) {
+    toNominalCache[fromCacheKey] = {nullptr, CanType()};
+    return nullptr;
+  }
+
+  // If multiple candidates tied at the same priority, warn and pick the first.
+  if (bestCandidates.size() > 1) {
+    auto &diags = getASTContext().Diags;
+    diags.diagnose(bestCandidates[0],
+                   diag::ambiguous_implicit_conversion,
+                   fromType, bestInferredToType);
+    for (auto *candidate : bestCandidates)
+      diags.diagnose(candidate, diag::ambiguous_implicit_conversion_candidate);
+  }
+
+  toNominalCache[fromCacheKey] =
+      {bestCandidates[0], bestInferredToType->getCanonicalType()};
+  toType = bestInferredToType;
+  return bestCandidates[0];
+}
+
 bool ConstraintSystem::repairFailures(
     Type lhs, Type rhs, ConstraintKind matchKind, TypeMatchOptions flags,
     SmallVectorImpl<RestrictionOrFix> &conversionsOrFixes,
@@ -5825,6 +6053,42 @@ bool ConstraintSystem::repairFailures(
           getConstraintLocator(locator)));
 
       return true;
+    }
+  }
+
+  // Check for a user-defined implicit conversion via an @implicit-marked init.
+  // This fires when the locator anchors to a bare expression (empty path), or
+  // when the path has a single element that is a contextual type mismatch or an
+  // argument-to-parameter mismatch — the two most common sites where an
+  // implicit conversion should transparently apply.
+  //
+  // NOTE: This check is intentionally placed inside repairFailures() rather
+  // than in the primary matchTypes() flow. That means the @implicit init lookup
+  // only ever runs when the type checker has already determined there is a type
+  // mismatch — it has zero overhead on code where types match normally, which
+  // is the vast majority of code. This directly addresses the concern that
+  // user-defined implicit conversions could slow down type checking: the cost
+  // is strictly bounded to the error-recovery path that would be entered anyway.
+  {
+    if (!hasAnyRestriction() && matchKind >= ConstraintKind::Subtype) {
+      // Compute locatorOK first: skip the expensive member scan entirely when
+      // the locator is a context where implicit conversions don't apply.
+      bool locatorOK = locator.trySimplifyToExpr() != nullptr;
+      if (!locatorOK && path.size() == 1) {
+        auto &last = path.back();
+        locatorOK = last.is<LocatorPathElt::ContextualType>() ||
+                    last.is<LocatorPathElt::ApplyArgToParam>();
+      }
+      if (locatorOK) {
+        Type resolvedToType = rhs;
+        if (getImplicitConversion(lhs, resolvedToType)) {
+          if (!resolvedToType->isEqual(rhs) && rhs->hasTypeVariable())
+            addConstraint(ConstraintKind::Bind, rhs, resolvedToType,
+                          getConstraintLocator(locator));
+          conversionsOrFixes.push_back(ConversionRestrictionKind::UserDefined);
+          return true;
+        }
+      }
     }
   }
 
@@ -15033,6 +15297,14 @@ ConstraintSystem::simplifyRestrictedConstraintImpl(
     }
 
     increaseScore(SK_ImplicitValueConversion, locator, impact);
+
+    if (worseThanBestSolution())
+      return SolutionKind::Error;
+
+    return SolutionKind::Solved;
+  }
+  case ConversionRestrictionKind::UserDefined: {
+    increaseScore(SK_ImplicitValueConversion, locator, 10);
 
     if (worseThanBestSolution())
       return SolutionKind::Error;
