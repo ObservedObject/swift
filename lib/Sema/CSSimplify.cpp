@@ -5406,14 +5406,21 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
         if (!resultType || !paramType)
           return 0;
       }
+      // When toType is concrete the !boundForward path was entered because
+      // binder.bind(resultType, toType) failed — e.g. for a failable init
+      // where resultType is Optional<Self> but toType is Self.  CSApply
+      // expects resolvedToType to be the non-Optional Self, so use toType.
+      // When toType had free type variables we entered here to discover the
+      // concrete type via paramType→fromType substitution; use resultType.
+      Type inferredType = toType->hasTypeVariable() ? resultType : toType;
       if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
         if (!checkGenericRequirements()) return 0;
-        outInferredToType = resultType;
+        outInferredToType = inferredType;
         return 2;
       }
       if (paramType->getCanonicalType() == fromCanType) {
         if (!checkGenericRequirements()) return 0;
-        outInferredToType = resultType;
+        outInferredToType = inferredType;
         return 1;
       }
       return 0;
