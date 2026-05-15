@@ -5455,16 +5455,17 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     return 0;
   };
 
-  // Use the cache on the nominal type to get pre-filtered candidates rather
-  // than scanning all members and extensions on every call.
-  // Try exact-optional match first (priority 2), then stripped (priority 1).
+  // Use the cache on the nominal type to get pre-filtered candidates.
+  // Key by the NominalTypeDecl of the from-type so that init(s: Set<Element>)
+  // is found by a lookup for Set<Int>, Set<Double>, etc. without iterating
+  // all members. Bare generic-param inits are merged into the bucket on first
+  // use and checked by matchPriority for actual type compatibility.
   ConstructorDecl *best = nullptr;
   int bestPriority = 0;
   Type bestInferredToType;
 
   auto consider = [&](ConstructorDecl *ctor) {
     Type inferredToType;
-    // Wrap in a Decl* for matchPriority which expects a Decl.
     int priority = matchPriority(ctor, inferredToType);
     if (priority > bestPriority) {
       bestPriority = priority;
@@ -5473,27 +5474,29 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     }
   };
 
-  for (auto *ctor : toNominal->getImplicitConversionInits(fromCanTypeWithOptional))
+  // First pass: with optional wrapper (priority-2 candidates, e.g.
+  // init(_ opt: UnsafeMutablePointer<CChar>?)).
+  NominalTypeDecl *fromNominalOpt = fromTypeWithOptional->getAnyNominal();
+  NominalTypeDecl *fromNominal = fromType->getAnyNominal();
+  for (auto *ctor : toNominal->getImplicitConversionInits(fromNominalOpt))
     consider(ctor);
 
-  if (bestPriority < 2)
-    for (auto *ctor : toNominal->getImplicitConversionInits(fromCanType))
+  // Second pass: without optional wrapper (priority-1 candidates). Skip if
+  // we already have a priority-2 match, or the nominal is the same (non-optional
+  // from-type, so the first pass already covered it).
+  if (bestPriority < 2 && fromNominal != fromNominalOpt)
+    for (auto *ctor : toNominal->getImplicitConversionInits(fromNominal))
       consider(ctor);
 
-  // Warn if the cache has more than one candidate for the winning fromType.
-  // This fires once per type-check of the ambiguous expression, which is
-  // Warn if multiple @implicit inits genuinely accept the same source type.
-  // Filter to only candidates whose parameter type exactly matches winningFrom
-  // (after optional-stripping as appropriate) to avoid false positives from
-  // wildcard/generic inits that happen to share the same cache bucket.
+  // Warn when multiple @implicit inits accept the same source type.
   if (best) {
     toType = bestInferredToType;
     CanType winningFrom = (bestPriority == 2) ? fromCanTypeWithOptional
                                               : fromCanType;
-    auto candidates = toNominal->getImplicitConversionInits(winningFrom);
-    // Count only those whose param canonical type is winningFrom.
+    NominalTypeDecl *winningNominal = (bestPriority == 2) ? fromNominalOpt
+                                                          : fromNominal;
     SmallVector<ConstructorDecl *, 2> exact;
-    for (auto *ctor : candidates) {
+    for (auto *ctor : toNominal->getImplicitConversionInits(winningNominal)) {
       auto *params = ctor->getParameters();
       if (!params || params->size() != 1)
         continue;

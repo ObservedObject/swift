@@ -6185,17 +6185,20 @@ bool NominalTypeDecl::isOptionalDecl() const {
 }
 
 ArrayRef<ConstructorDecl *>
-NominalTypeDecl::getImplicitConversionInits(CanType fromType) const {
+NominalTypeDecl::getImplicitConversionInits(NominalTypeDecl *fromNominal) const {
   // Build the cache lazily on first access, walking all members and extensions.
-  // The cache is heap-allocated (not bump-ptr) since DenseMap/TinyPtrVector
-  // have non-trivial destructors and NominalTypeDecl is BumpPtrAllocated.
+  // Heap-allocated because NominalTypeDecl is BumpPtrAllocated and the
+  // containers have non-trivial destructors.
   //
-  // Key: the canonical nominal decl of the parameter type (e.g. Set for
-  // `init(s: Set<Element>)`). This handles both concrete and generic params:
-  // Set<Int> and Set<Element> both have NominalDecl == Set, so a lookup for
-  // `Set<Int>` correctly finds `init(s: Set<Element>)`.
-  // For non-nominal param types (e.g. UnsafePointer<CChar>) we use the full
-  // canonical type as the key since there are no type params to abstract over.
+  // byNominal keys on the NominalTypeDecl * of the parameter type:
+  //   init(s: Set<Element>)      -> key = Set's NominalTypeDecl
+  //   init(p: UnsafePointer<T>)  -> key = UnsafePointer's NominalTypeDecl
+  // This lets us find init(s: Set<Element>) by looking up Set, regardless
+  // of whether the from-type is Set<Int>, Set<Double>, etc.
+  //
+  // generic holds inits whose parameter is a bare generic type parameter
+  // (T, Element, etc.) with no nominal, so they must be considered for any
+  // from-type. matchPriority handles the actual type binding.
   if (!ImplicitConversionInits) {
     ImplicitConversionInits = new ImplicitConversionInitCache();
     auto consider = [&](Decl *member) {
@@ -6209,19 +6212,10 @@ NominalTypeDecl::getImplicitConversionInits(CanType fromType) const {
       auto paramType = params->get(0)->getInterfaceType();
       if (!paramType)
         return;
-      // Key by nominal decl for concrete/generic nominal params (Set<Element>
-      // and Set<Int> both key as Set). For bare type params (T, Element alone)
-      // use a null CanType as a wildcard — these inits accept any source type
-      // and must be checked on every lookup.
-      CanType key;
-      auto paramCanType = paramType->getCanonicalType();
-      if (paramCanType->is<GenericTypeParamType>())
-        key = CanType(); // wildcard
-      else if (auto *nominal = paramType->getAnyNominal())
-        key = nominal->getDeclaredType()->getCanonicalType();
+      if (auto *paramNominal = paramType->getAnyNominal())
+        ImplicitConversionInits->byNominal[paramNominal].push_back(ctor);
       else
-        key = paramCanType;
-      ImplicitConversionInits->map[key].push_back(ctor);
+        ImplicitConversionInits->generic.push_back(ctor);
     };
     for (auto *member : getMembers())
       consider(member);
@@ -6229,33 +6223,30 @@ NominalTypeDecl::getImplicitConversionInits(CanType fromType) const {
       for (auto *member : ext->getMembers())
         consider(member);
   }
-  // Look up by nominal decl (handles generic nominal params like Set<Element>
-  // matching Set<Int>), then also always check the wildcard bucket (null key)
-  // for bare type-param inits like `init(_ v: T)` that accept any source type.
-  CanType key;
-  if (auto *nominal = fromType->getAnyNominal())
-    key = nominal->getDeclaredType()->getCanonicalType();
-  else
-    key = fromType;
 
-  llvm::TinyPtrVector<ConstructorDecl *> results;
-  auto appendBucket = [&](CanType k) {
-    auto it = ImplicitConversionInits->map.find(k);
-    if (it != ImplicitConversionInits->map.end())
-      for (auto *ctor : it->second)
-        results.push_back(ctor);
-  };
-  appendBucket(key);
-  if (key != CanType()) // wildcard bucket not already searched
-    appendBucket(CanType());
+  // If the from-type has no nominal (e.g. it is itself a bare generic param),
+  // only the generic-param inits can ever match.
+  if (!fromNominal)
+    return ImplicitConversionInits->generic;
 
-  // Cache the merged result under fromType for future lookups.
-  if (!results.empty())
-    ImplicitConversionInits->map[fromType] = results;
+  // For non-null fromNominal: return byNominal[fromNominal] merged with the
+  // generic list. On first query for a given fromNominal we append the generic
+  // entries directly into the byNominal bucket and mark it done so subsequent
+  // calls return the stable ArrayRef in O(1) without re-merging.
+  // Use find() to avoid creating empty byNominal entries for nominals that
+  // have no @implicit inits with that parameter nominal.
+  auto &merged = ImplicitConversionInits->mergedNominals;
+  if (!ImplicitConversionInits->generic.empty() && !merged.count(fromNominal)) {
+    // Merge generic list into the byNominal bucket (creates entry if needed).
+    auto &bucket = ImplicitConversionInits->byNominal[fromNominal];
+    for (auto *ctor : ImplicitConversionInits->generic)
+      bucket.push_back(ctor);
+    merged.insert(fromNominal);
+  }
 
-  auto it = ImplicitConversionInits->map.find(fromType);
-  if (it == ImplicitConversionInits->map.end())
-    return {};
+  auto it = ImplicitConversionInits->byNominal.find(fromNominal);
+  if (it == ImplicitConversionInits->byNominal.end())
+    return ImplicitConversionInits->generic;
   return it->second;
 }
 

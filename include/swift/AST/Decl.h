@@ -4451,12 +4451,22 @@ class NominalTypeDecl : public GenericTypeDecl, public IterableDeclContext {
   /// kind of type cannot have Objective-C methods.
   bool createObjCMethodLookup();
 
-  /// Cache mapping canonical fromType -> @implicit inits accepting that type.
-  /// Built lazily on first call to getImplicitConversionInits(). The vector
-  /// holds more than one entry only when duplicate @implicit inits exist for
-  /// the same source type, which is diagnosed as a warning.
+  /// Cache for @implicit single-argument initializers. Built lazily.
+  /// Heap-allocated because NominalTypeDecl is BumpPtrAllocated and
+  /// DenseMap/SmallVector have non-trivial destructors.
+  ///
+  /// byNominal: keyed by the NominalTypeDecl of the parameter type.
+  ///   e.g. init(s: Set<Element>) -> key = Set's NominalTypeDecl
+  ///   e.g. init(p: UnsafePointer<CChar>) -> key = UnsafePointer's NominalTypeDecl
+  /// generic: inits whose parameter is a bare generic type param (T, Element)
+  ///   or another non-nominal type; appended into byNominal buckets on first
+  ///   use and must be searched for every distinct fromNominal.
+  /// mergedNominals: tracks which byNominal buckets have had generic appended.
   struct ImplicitConversionInitCache {
-    llvm::DenseMap<CanType, llvm::TinyPtrVector<ConstructorDecl *>> map;
+    llvm::DenseMap<NominalTypeDecl *,
+                   llvm::TinyPtrVector<ConstructorDecl *>> byNominal;
+    llvm::SmallVector<ConstructorDecl *, 2> generic;
+    llvm::DenseSet<NominalTypeDecl *> mergedNominals;
   };
   mutable ImplicitConversionInitCache *ImplicitConversionInits = nullptr;
 
@@ -4673,12 +4683,14 @@ public:
   /// the type is of a kind which cannot contain @objc methods.
   void recordObjCMethod(AbstractFunctionDecl *method, ObjCSelector selector);
 
-  /// Returns all @implicit-marked initializers declared on this type (including
-  /// extensions) that accept the given canonical source type. The result is
-  /// cached after the first call. More than one entry indicates duplicate
-  /// @implicit inits for the same source type, which should be warned about.
+  /// Returns all @implicit-marked single-argument initializers on this type
+  /// (including extensions) whose parameter type has the given nominal, plus
+  /// any inits with a bare generic type-parameter (which may match any source
+  /// type and are always included for matchPriority to filter).
+  /// If \p fromNominal is null only the generic list is returned.
+  /// The cache is built lazily on first call.
   ArrayRef<ConstructorDecl *>
-  getImplicitConversionInits(CanType fromType) const;
+  getImplicitConversionInits(NominalTypeDecl *fromNominal) const;
 
   /// Is this the decl for Optional<T>?
   bool isOptionalDecl() const;
