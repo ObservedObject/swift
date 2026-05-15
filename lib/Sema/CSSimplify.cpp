@@ -5317,20 +5317,16 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   auto fromCanType = fromType->getCanonicalType();
   auto fromCanTypeWithOptional = fromTypeWithOptional->getCanonicalType();
 
-  // Returns 0 (no match), 1 (stripped match), or 2 (exact optional match).
-  // Higher priority wins. Candidates come pre-filtered from the cache so we
-  // only need the generic binding and requirements check here.
+  // Try to match a single @implicit init candidate. Returns the priority of
+  // the match (2 = exact optional, 1 = stripped, 0 = no match) and sets
+  // outInferredToType on success.
   auto matchPriority = [&](ConstructorDecl *ctor, Type &outInferredToType) -> int {
-    // Reject effectful initializers: the synthesized call site has no
-    // try/await, so applying a throwing or async @implicit init would be
-    // unsound.
+    // Reject effectful inits: the synthesized call site has no try/await.
     if (ctor->hasThrows() || ctor->hasAsync())
       return 0;
 
     Type resultType = ctor->getResultInterfaceType();
     Type paramType = ctor->getParameters()->get(0)->getInterfaceType();
-    if (!resultType || !paramType)
-      return 0;
 
     // Quick exact-optional check before attempting generic binding.
     if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
@@ -5341,36 +5337,28 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     llvm::DenseMap<CanType, Type> substitutions;
     struct TypeParameterBinder {
       llvm::DenseMap<CanType, Type> &substitutions;
-
       bool bind(Type pattern, Type actual) {
         pattern = pattern->getCanonicalType();
         actual = actual->getCanonicalType();
-
-        if (auto *genericParam = pattern->getAs<GenericTypeParamType>()) {
-          auto key = genericParam->getCanonicalType();
+        if (auto *gp = pattern->getAs<GenericTypeParamType>()) {
+          auto key = gp->getCanonicalType();
           auto existing = substitutions.find(key);
           if (existing != substitutions.end())
             return existing->second->isEqual(actual);
           substitutions[key] = actual;
           return true;
         }
-
         if (pattern->isEqual(actual))
           return true;
-
-        auto *patternGeneric = pattern->getAs<BoundGenericType>();
-        auto *actualGeneric = actual->getAs<BoundGenericType>();
-        if (!patternGeneric || !actualGeneric ||
-            patternGeneric->getDecl() != actualGeneric->getDecl())
+        auto *pg = pattern->getAs<BoundGenericType>();
+        auto *ag = actual->getAs<BoundGenericType>();
+        if (!pg || !ag || pg->getDecl() != ag->getDecl())
           return false;
-
-        auto patternArgs = patternGeneric->getGenericArgs();
-        auto actualArgs = actualGeneric->getGenericArgs();
-        if (patternArgs.size() != actualArgs.size())
+        auto pa = pg->getGenericArgs(), aa = ag->getGenericArgs();
+        if (pa.size() != aa.size())
           return false;
-
-        for (auto idx : indices(patternArgs))
-          if (!bind(patternArgs[idx], actualArgs[idx]))
+        for (auto idx : indices(pa))
+          if (!bind(pa[idx], aa[idx]))
             return false;
         return true;
       }
@@ -5385,16 +5373,12 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
           LookUpConformanceInModule());
     };
 
-    // Returns true if the derived substitutions satisfy the initializer's
-    // full generic signature (including where-clause requirements).
     auto checkGenericRequirements = [&]() -> bool {
       if (substitutions.empty())
         return true;
-      auto sig =
-          ctor->getInnermostDeclContext()->getGenericSignatureOfContext();
+      auto sig = ctor->getInnermostDeclContext()->getGenericSignatureOfContext();
       if (!sig)
         return true;
-      // Use no extra SubstOptions (std::nullopt = no flags).
       auto result = checkRequirements(
           sig.getRequirements(),
           [&](SubstitutableType *type) -> Type {
@@ -5407,11 +5391,14 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
 
     TypeParameterBinder binder{substitutions};
 
-    // First try binding result -> toType (the normal case where toType is
-    // fully concrete, e.g. `let a: Array<Int> = someSet`).
-    // If toType contains free type variables (e.g. `let a: Array = someSet`),
-    // fall back to binding paramType -> fromType and substitute into both
-    // resultType and paramType to discover the concrete types.
+    // At least one of toType / fromType must be concrete for binding to be
+    // meaningful.
+    assert((!toType->hasTypeVariable() || !fromType->hasTypeVariable()) &&
+           "getImplicitConversion called with two open type variables");
+
+    // Try binding result -> toType first (toType is concrete in the common
+    // case). If toType has free type variables, fall back to binding
+    // paramType -> fromType and substitute to discover the concrete types.
     bool boundForward = binder.bind(resultType, toType) &&
                         !toType->hasTypeVariable();
     if (!boundForward) {
@@ -5425,14 +5412,12 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
           return 0;
       }
       if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
-        if (!checkGenericRequirements())
-          return 0;
+        if (!checkGenericRequirements()) return 0;
         outInferredToType = resultType;
         return 2;
       }
       if (paramType->getCanonicalType() == fromCanType) {
-        if (!checkGenericRequirements())
-          return 0;
+        if (!checkGenericRequirements()) return 0;
         outInferredToType = resultType;
         return 1;
       }
@@ -5444,36 +5429,21 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
       if (!paramType)
         return 0;
     }
-
     if (paramType->getCanonicalType() == fromCanType) {
-      if (!checkGenericRequirements())
-        return 0;
+      if (!checkGenericRequirements()) return 0;
       outInferredToType = toType;
       return 1;
     }
-
     return 0;
   };
 
-  // Check the memoized result cache on toNominal.  The cache is keyed by the
-  // canonical fromType (before optional stripping) so that both priority-1 and
-  // priority-2 matches are covered by a single entry.
-  auto fromCacheKey = fromTypeWithOptional->getCanonicalType();
-  if (auto cached = toNominal->getCachedImplicitConversion(fromCacheKey)) {
-    auto [cachedCtor, cachedToType] = *cached;
-    if (!cachedCtor)
-      return nullptr;
-    toType = cachedToType;
-    return cachedCtor;
-  }
-
-  // Cache miss: scan all @implicit single-argument inits on toNominal.
+  // Scan all @implicit single-argument inits, tracking the highest-priority
+  // match (2 = exact optional, 1 = stripped).
   ConstructorDecl *best = nullptr;
   int bestPriority = 0;
   Type bestInferredToType;
-  SmallVector<ConstructorDecl *, 4> allCandidates;
 
-  auto scanMember = [&](Decl *member) {
+  auto consider = [&](Decl *member) {
     auto *ctor = dyn_cast<ConstructorDecl>(member);
     if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
         ctor->isInvalid())
@@ -5481,7 +5451,6 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     auto *params = ctor->getParameters();
     if (!params || params->size() != 1)
       return;
-    allCandidates.push_back(ctor);
     Type inferredToType;
     int priority = matchPriority(ctor, inferredToType);
     if (priority > bestPriority) {
@@ -5492,42 +5461,13 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   };
 
   for (auto *member : toNominal->getMembers())
-    scanMember(member);
+    consider(member);
   for (auto *ext : toNominal->getExtensions())
     for (auto *member : ext->getMembers())
-      scanMember(member);
+      consider(member);
 
-  if (!best) {
-    toNominal->setCachedImplicitConversion(fromCacheKey, nullptr, CanType());
-    return nullptr;
-  }
-
-  toType = bestInferredToType;
-
-  // Warn when multiple @implicit inits accept the same source type.
-  CanType winningFrom = (bestPriority == 2) ? fromCanTypeWithOptional
-                                            : fromCanType;
-  SmallVector<ConstructorDecl *, 2> exact;
-  for (auto *ctor : allCandidates) {
-    auto *params = ctor->getParameters();
-    if (!params || params->size() != 1)
-      continue;
-    auto pt = params->get(0)->getInterfaceType();
-    if (pt && pt->getCanonicalType() == winningFrom)
-      exact.push_back(ctor);
-  }
-  if (exact.size() > 1) {
-    auto &diags = getASTContext().Diags;
-    diags.diagnose(best->getLoc(), diag::warn_implicit_init_duplicate,
-                   fromTypeWithOptional);
-    for (auto *ctor : exact)
-      if (ctor != best)
-        diags.diagnose(ctor->getLoc(),
-                       diag::note_implicit_init_duplicate_here);
-  }
-
-  toNominal->setCachedImplicitConversion(fromCacheKey, best,
-                                         bestInferredToType->getCanonicalType());
+  if (best)
+    toType = bestInferredToType;
   return best;
 }
 
