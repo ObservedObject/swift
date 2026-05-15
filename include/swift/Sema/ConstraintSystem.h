@@ -3187,14 +3187,11 @@ public:
                       ConstraintLocatorBuilder locator);
 
   /// Determine whether an initializer annotated with @implicit can convert a
-  /// value from the source type to the destination type. On success, toType
-  /// is updated to the concrete resolved destination type (e.g. Array<Int>
-  /// when the annotation was just `Array` and the source was Set<Int>).
-  /// If \p diagnose is true and multiple @implicit inits match at the same
-  /// priority, a warning is emitted for all tied candidates; in all cases
-  /// the first match is returned.
-  ConstructorDecl *getImplicitConversion(Type fromType, Type &toType,
-                                         bool diagnose = false);
+  /// value from the source type to the destination type. On success, \p toType
+  /// is updated to the concrete resolved destination type. The first time a given
+  /// (fromType, toType) pair is evaluated, any duplicate-init ambiguity warning is
+  /// emitted; subsequent calls for the same pair return the memoised result silently.
+  ConstructorDecl *getImplicitConversion(Type fromType, Type &toType);
 
   TypeMatchResult
   matchPackTypes(PackType *pack1, PackType *pack2,

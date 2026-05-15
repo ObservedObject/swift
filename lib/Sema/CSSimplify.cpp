@@ -5299,8 +5299,7 @@ static bool repairOutOfOrderArgumentsInBinaryFunction(
 /// \return true if at least some of the failures has been repaired
 /// successfully, which allows type matcher to continue.
 ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
-                                                         Type &toType,
-                                                         bool diagnose) {
+                                                         Type &toType) {
   // Simplify but do NOT strip optionals yet — an @implicit init may explicitly
   // accept an optional (e.g. `init(str: UnsafeMutablePointer<CChar>?)`), and
   // that should be preferred over one that accepts the unwrapped type.
@@ -5337,15 +5336,13 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   // and priority-2 matches are covered by a single entry.
   auto fromCacheKey = fromCanTypeWithOptional;
   auto &toNominalCache = implicitConversionResults[toNominal];
-  if (!diagnose) {
-    if (auto cacheIt = toNominalCache.find(fromCacheKey);
-        cacheIt != toNominalCache.end()) {
-      auto [cachedCtor, cachedToType] = cacheIt->second;
-      if (!cachedCtor)
-        return nullptr;
-      toType = cachedToType;
-      return cachedCtor;
-    }
+  if (auto cacheIt = toNominalCache.find(fromCacheKey);
+      cacheIt != toNominalCache.end()) {
+    auto [cachedCtor, cachedToType] = cacheIt->second;
+    if (!cachedCtor)
+      return nullptr;
+    toType = cachedToType;
+    return cachedCtor;
   }
 
   // Try to match a single @implicit init candidate. Returns the priority of
@@ -5514,7 +5511,7 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   }
 
   // If multiple candidates tied at the same priority, warn and pick the first.
-  if (diagnose && bestCandidates.size() > 1) {
+  if (bestCandidates.size() > 1) {
     auto &diags = getASTContext().Diags;
     diags.diagnose(bestCandidates[0],
                    diag::ambiguous_implicit_conversion,
