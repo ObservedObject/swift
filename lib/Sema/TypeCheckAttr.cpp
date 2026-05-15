@@ -216,6 +216,7 @@ public:
   IGNORED_ATTR(NonSendable)
   IGNORED_ATTR(AtRethrows)
   IGNORED_ATTR(AtReasync)
+  IGNORED_ATTR(Implicit)
   IGNORED_ATTR(ImplicitSelfCapture)
   IGNORED_ATTR(Preconcurrency)
   IGNORED_ATTR(BackDeployed)

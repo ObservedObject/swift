@@ -7424,6 +7424,101 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
 
       return outerCall;
     }
+
+    case ConversionRestrictionKind::UserDefined: {
+      // Save the originally-requested type before getImplicitConversion strips
+      // optional wrapping from it (via lookThroughAllOptionalTypes()).
+      Type originalToType = toType;
+      Type resolvedToType = toType;
+      auto *decl = cs.getImplicitConversion(fromType, resolvedToType);
+      if (!decl)
+        return nullptr;
+
+      // resolveConcreteDeclRef looks up opened types by locator; since
+      // @implicit inits are not opened via normal overload resolution, subs
+      // may be empty for generic inits. Derive them from resolvedToType.
+      auto declRef = resolveConcreteDeclRef(decl, locator);
+      if (!declRef.getSubstitutions()) {
+        if (auto sig = decl->getInnermostDeclContext()
+                           ->getGenericSignatureOfContext()) {
+          bool allConformancesSatisfied = true;
+          auto subs = SubstitutionMap::get(
+              sig,
+              resolvedToType->getContextSubstitutionMap().getReplacementTypes(),
+              [&](InFlightSubstitution &IFS, Type original,
+                  ProtocolDecl *proto) -> ProtocolConformanceRef {
+                // Short-circuit once we know the conversion is inapplicable.
+                if (!allConformancesSatisfied)
+                  return ProtocolConformanceRef();
+                auto conformance =
+                    lookupConformance(original.subst(IFS), proto,
+                                     /*allowMissing=*/false);
+                if (conformance.isInvalid())
+                  allConformancesSatisfied = false;
+                return conformance;
+              });
+          if (!subs || !allConformancesSatisfied)
+            return nullptr;
+          declRef = ConcreteDeclRef(decl, subs);
+        }
+      }
+
+      Type initType = declRef.getDecl()->getInterfaceType();
+      if (auto *gft = initType->getAs<GenericFunctionType>())
+        initType = gft->substGenericArgs(declRef.getSubstitutions());
+      else if (declRef.getSubstitutions())
+        initType = initType.subst(declRef.getSubstitutions());
+
+      auto *ctorRefExpr =
+          new (ctx) DeclRefExpr(declRef, DeclNameLoc(), /*Implicit=*/true);
+      ctorRefExpr->setType(initType);
+
+      auto *typeExpr = TypeExpr::createImplicit(resolvedToType, ctx);
+      auto *innerCall = ConstructorRefCallExpr::create(
+          ctx, ctorRefExpr, typeExpr,
+          initType->castTo<FunctionType>()->getResult());
+      cs.cacheExprTypes(innerCall);
+
+      // initType is curried: (Self.Type) -> (Param) -> Result.
+      // innerCall has consumed the metatype; use the inner function type.
+      auto innerFnType = initType->castTo<FunctionType>()->getResult()
+                             ->castTo<FunctionType>();
+      Type paramType = innerFnType->getParams()[0].getParameterType();
+      Identifier argLabel = innerFnType->getParams()[0].getLabel();
+      Expr *argExpr = coerceToType(cs.coerceToRValue(expr), paramType, locator);
+      if (!argExpr)
+        return nullptr;
+
+      // Preserve the argument label from the init declaration.
+      auto *argList = ArgumentList::forImplicitSingle(ctx, argLabel, argExpr);
+      auto *outerCall = CallExpr::createImplicit(ctx, innerCall, argList);
+
+      // A failable init? returns Optional<T>. Force-unwrap it so the
+      // implicit conversion produces the non-optional resolvedToType.
+      // The user opts into crash-on-nil by marking the init @implicit.
+      Expr *result = outerCall;
+      if (decl->isFailable()) {
+        Type optionalResultType = OptionalType::get(resolvedToType);
+        outerCall->setType(optionalResultType);
+        cs.setType(outerCall, optionalResultType);
+        // Use SourceLoc() so the ForceValueExpr is implicit; set forcedIUO
+        // only when the init is actually init! (IUO), not init?.
+        result = new (ctx) ForceValueExpr(outerCall, SourceLoc(),
+                                          decl->isImplicitlyUnwrappedOptional());
+        cs.setType(result, resolvedToType);
+      } else {
+        outerCall->setType(resolvedToType);
+        cs.setType(outerCall, resolvedToType);
+      }
+
+      // getImplicitConversion strips optional wrapping from toType into
+      // resolvedToType. If the originally-requested type had more optional
+      // layers, re-coerce to reinject the result into the right wrapper.
+      if (!resolvedToType->isEqual(originalToType))
+        result = coerceToType(result, originalToType, locator);
+
+      return result;
+    }
     }
   }
 

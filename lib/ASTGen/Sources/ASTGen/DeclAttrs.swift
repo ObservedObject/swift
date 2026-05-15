@@ -264,6 +264,7 @@ extension ASTGenVisitor {
         .IBInspectable,
         .IBOutlet,
         .IBSegueAction,
+        .Implicit,
         .ImplementationOnly,
         .ImplicitSelfCapture,
         .InheritsConvenienceInitializers,

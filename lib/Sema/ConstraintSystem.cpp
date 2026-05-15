@@ -2085,7 +2085,19 @@ SolutionResult ConstraintSystem::salvage() {
 
       if (getASTContext().TypeCheckerOpts.CrashOnValidSalvage) {
         auto &solution = viable[0];
-        if (solution.Fixes.empty() &&
+        // Don't crash if the solution uses an @implicit user-defined conversion.
+        // Such solutions are legitimately found in salvage() because the check
+        // lives in repairFailures() deliberately (to avoid overhead on the
+        // primary solve path). Check ConstraintRestrictions directly rather
+        // than the score, since the score may not propagate outward through
+        // nested conjunctions (e.g. multi-statement closures).
+        bool hasUserDefinedConversion = llvm::any_of(
+            solution.ConstraintRestrictions,
+            [](const auto &entry) {
+              return entry.second == ConversionRestrictionKind::UserDefined;
+            });
+        if (!hasUserDefinedConversion &&
+            solution.Fixes.empty() &&
             diagnosticTransaction == nullptr &&
             !getASTContext().LangOpts.DisableAvailabilityChecking &&
             solution.getFixedScore().Data[SK_Unavailable] == 0 &&
@@ -4630,6 +4642,7 @@ ConstraintSystem::isConversionEphemeral(ConversionRestrictionKind conversion,
   case ConversionRestrictionKind::ObjCTollFreeBridgeToCF:
   case ConversionRestrictionKind::CGFloatToDouble:
   case ConversionRestrictionKind::DoubleToCGFloat:
+  case ConversionRestrictionKind::UserDefined:
     // @_nonEphemeral has no effect on these conversions, so treat them as all
     // being non-ephemeral in order to allow their passing to an @_nonEphemeral
     // parameter.
