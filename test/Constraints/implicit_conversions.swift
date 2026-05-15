@@ -251,4 +251,21 @@ let rawDoubles: [Double] = [9.1, 0.9, 4.5]
 let mapped: [Int] = rawDoubles.map { (x: Double) -> Int in x }
 assertEqual(mapped, [9, 0, 4], "map with annotated closure")
 
+// ===----------------------------------------------------------------------===
+// MARK: - 19. Ambiguous @implicit tie — picks first, warns
+// ===----------------------------------------------------------------------===
+
+// When two @implicit inits match at the same priority the first (in source
+// order) wins and an "ambiguous @implicit conversion" warning is emitted
+// at the winning init declaration.
+struct TiedTarget {
+    let which: Int
+    @implicit init(firstTied _: Int) { which = 1 } // expected-warning {{ambiguous @implicit conversion from 'Int' to 'TiedTarget'; using first match}} expected-note {{candidate @implicit initializer found here}}
+    @implicit init(secondTied _: Int) { which = 2 } // expected-note {{candidate @implicit initializer found here}}
+}
+
+let tiedSource: Int = 99
+let tiedResult: TiedTarget = tiedSource
+precondition(tiedResult.which == 1, "ambiguity picks first init")
+
 print("All @implicit conversion tests passed.")
