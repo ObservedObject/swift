@@ -5429,6 +5429,11 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
       if (!paramType)
         return 0;
     }
+    if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
+      if (!checkGenericRequirements()) return 0;
+      outInferredToType = toType;
+      return 2;
+    }
     if (paramType->getCanonicalType() == fromCanType) {
       if (!checkGenericRequirements()) return 0;
       outInferredToType = toType;
@@ -5442,6 +5447,7 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   ConstructorDecl *best = nullptr;
   int bestPriority = 0;
   Type bestInferredToType;
+  bool bestIsTied = false;
 
   auto consider = [&](Decl *member) {
     auto *ctor = dyn_cast<ConstructorDecl>(member);
@@ -5457,6 +5463,10 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
       bestPriority = priority;
       best = ctor;
       bestInferredToType = inferredToType;
+      bestIsTied = false;
+    } else if (priority > 0 && priority == bestPriority) {
+      // Two candidates matched at the same priority — ambiguous; suppress.
+      bestIsTied = true;
     }
   };
 
@@ -5466,9 +5476,9 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     for (auto *member : ext->getMembers())
       consider(member);
 
-  if (best)
+  if (best && !bestIsTied)
     toType = bestInferredToType;
-  return best;
+  return (best && !bestIsTied) ? best : nullptr;
 }
 
 bool ConstraintSystem::repairFailures(
@@ -6016,15 +6026,17 @@ bool ConstraintSystem::repairFailures(
   // is strictly bounded to the error-recovery path that would be entered anyway.
   {
     if (!hasAnyRestriction() && matchKind >= ConstraintKind::Subtype) {
-      Type resolvedToType = rhs;
-      if (getImplicitConversion(lhs, resolvedToType)) {
-        bool locatorOK = locator.trySimplifyToExpr() != nullptr;
-        if (!locatorOK && path.size() == 1) {
-          auto &last = path.back();
-          locatorOK = last.is<LocatorPathElt::ContextualType>() ||
-                      last.is<LocatorPathElt::ApplyArgToParam>();
-        }
-        if (locatorOK) {
+      // Compute locatorOK first: skip the expensive member scan entirely when
+      // the locator is a context where implicit conversions don't apply.
+      bool locatorOK = locator.trySimplifyToExpr() != nullptr;
+      if (!locatorOK && path.size() == 1) {
+        auto &last = path.back();
+        locatorOK = last.is<LocatorPathElt::ContextualType>() ||
+                    last.is<LocatorPathElt::ApplyArgToParam>();
+      }
+      if (locatorOK) {
+        Type resolvedToType = rhs;
+        if (getImplicitConversion(lhs, resolvedToType)) {
           if (!resolvedToType->isEqual(rhs) && rhs->hasTypeVariable())
             addConstraint(ConstraintKind::Bind, rhs, resolvedToType,
                           getConstraintLocator(locator));

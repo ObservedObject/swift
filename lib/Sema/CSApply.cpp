@@ -7501,8 +7501,10 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
         Type optionalResultType = OptionalType::get(resolvedToType);
         outerCall->setType(optionalResultType);
         cs.setType(outerCall, optionalResultType);
-        result = new (ctx) ForceValueExpr(outerCall, outerCall->getEndLoc(),
-                                          /*isImplicit=*/true);
+        // Use SourceLoc() so the ForceValueExpr is implicit; set forcedIUO
+        // only when the init is actually init! (IUO), not init?.
+        result = new (ctx) ForceValueExpr(outerCall, SourceLoc(),
+                                          decl->isImplicitlyUnwrappedOptional());
         cs.setType(result, resolvedToType);
       } else {
         outerCall->setType(resolvedToType);

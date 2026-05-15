@@ -924,7 +924,7 @@ DECL_ATTR(diagnose, Diagnose,
 
 SIMPLE_DECL_ATTR(implicit, Implicit,
   OnConstructor,
-  UserInaccessible | ABIStableToAdd | ABIStableToRemove | APIStableToAdd | APIStableToRemove | ForbiddenInABIAttr,
+  ABIStableToAdd | ABIStableToRemove | APIStableToAdd | APIStableToRemove | ForbiddenInABIAttr,
   175)
 LAST_DECL_ATTR(Implicit)
 
