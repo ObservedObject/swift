@@ -268,4 +268,27 @@ let tiedSource: Int = 99
 let tiedResult: TiedTarget = tiedSource
 precondition(tiedResult.which == 1, "ambiguity picks first init")
 
+// ===----------------------------------------------------------------------===
+// MARK: - 20. Constrained-extension @implicit init — requirements checked
+// ===----------------------------------------------------------------------===
+
+// An @implicit init defined in a constrained extension must only fire when the
+// extension's where-clause requirements are satisfied.  Previously the
+// "quick exact-optional check" in matchPriority could bypass checkGenericRequirements()
+// for inits with a concrete parameter type, allowing the conversion even when
+// the constraints were not met.
+
+struct Boxed<T> {
+    var value: T
+    init(value: T) { self.value = value }
+}
+
+extension Boxed where T == String {
+    @implicit init(_ s: String) { self.value = s }
+}
+
+// T == String is satisfied: conversion must succeed.
+let boxedStr: Boxed<String> = "hello"
+precondition(boxedStr.value == "hello", "constrained extension @implicit init")
+
 print("All @implicit conversion tests passed.")

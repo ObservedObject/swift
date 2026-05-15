@@ -42,3 +42,21 @@ struct AsyncTarget {
     @implicit init(_ n: Int) async { }
 }
 let _: AsyncTarget = 42  // expected-error {{cannot convert value of type 'Int' to specified type 'AsyncTarget'}}
+
+// ===----------------------------------------------------------------------===
+// @implicit init in a constrained extension must NOT fire when the
+// extension's where-clause requirements are not satisfied for the destination
+// type. The matchPriority quick-check path used to bypass checkGenericRequirements()
+// for inits with a concrete parameter type.
+// ===----------------------------------------------------------------------===
+
+struct BoxedForConstraint<T> {
+    var value: T
+    init(value: T) { self.value = value }
+}
+
+extension BoxedForConstraint where T == String {
+    @implicit init(_ s: String) { self.value = s }
+}
+
+let _: BoxedForConstraint<Int> = "hello"  // expected-error {{cannot convert value of type 'String' to specified type 'BoxedForConstraint<Int>'}}

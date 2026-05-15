@@ -5329,12 +5329,6 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     Type resultType = ctor->getResultInterfaceType();
     Type paramType = ctor->getParameters()->get(0)->getInterfaceType();
 
-    // Quick exact-optional check before attempting generic binding.
-    if (paramType->getCanonicalType() == fromCanTypeWithOptional) {
-      outInferredToType = toType;
-      return 2;
-    }
-
     llvm::DenseMap<CanType, Type> substitutions;
     struct TypeParameterBinder {
       llvm::DenseMap<CanType, Type> &substitutions;
