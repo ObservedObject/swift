@@ -4451,6 +4451,15 @@ class NominalTypeDecl : public GenericTypeDecl, public IterableDeclContext {
   /// kind of type cannot have Objective-C methods.
   bool createObjCMethodLookup();
 
+  /// Cache mapping canonical fromType -> @implicit inits accepting that type.
+  /// Built lazily on first call to getImplicitConversionInits(). The vector
+  /// holds more than one entry only when duplicate @implicit inits exist for
+  /// the same source type, which is diagnosed as a warning.
+  struct ImplicitConversionInitCache {
+    llvm::DenseMap<CanType, llvm::TinyPtrVector<ConstructorDecl *>> map;
+  };
+  mutable ImplicitConversionInitCache *ImplicitConversionInits = nullptr;
+
   friend class ASTContext;
   friend class MemberLookupTable;
   friend class ConformanceLookupTable;
@@ -4663,6 +4672,13 @@ public:
   /// Record the presence of an @objc method with the given selector. No-op if
   /// the type is of a kind which cannot contain @objc methods.
   void recordObjCMethod(AbstractFunctionDecl *method, ObjCSelector selector);
+
+  /// Returns all @implicit-marked initializers declared on this type (including
+  /// extensions) that accept the given canonical source type. The result is
+  /// cached after the first call. More than one entry indicates duplicate
+  /// @implicit inits for the same source type, which should be warned about.
+  ArrayRef<ConstructorDecl *>
+  getImplicitConversionInits(CanType fromType) const;
 
   /// Is this the decl for Optional<T>?
   bool isOptionalDecl() const;

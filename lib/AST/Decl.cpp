@@ -6184,6 +6184,81 @@ bool NominalTypeDecl::isOptionalDecl() const {
   return this == getASTContext().getOptionalDecl();
 }
 
+ArrayRef<ConstructorDecl *>
+NominalTypeDecl::getImplicitConversionInits(CanType fromType) const {
+  // Build the cache lazily on first access, walking all members and extensions.
+  // The cache is heap-allocated (not bump-ptr) since DenseMap/TinyPtrVector
+  // have non-trivial destructors and NominalTypeDecl is BumpPtrAllocated.
+  //
+  // Key: the canonical nominal decl of the parameter type (e.g. Set for
+  // `init(s: Set<Element>)`). This handles both concrete and generic params:
+  // Set<Int> and Set<Element> both have NominalDecl == Set, so a lookup for
+  // `Set<Int>` correctly finds `init(s: Set<Element>)`.
+  // For non-nominal param types (e.g. UnsafePointer<CChar>) we use the full
+  // canonical type as the key since there are no type params to abstract over.
+  if (!ImplicitConversionInits) {
+    ImplicitConversionInits = new ImplicitConversionInitCache();
+    auto consider = [&](Decl *member) {
+      auto *ctor = dyn_cast<ConstructorDecl>(member);
+      if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
+          ctor->isInvalid())
+        return;
+      auto *params = ctor->getParameters();
+      if (!params || params->size() != 1)
+        return;
+      auto paramType = params->get(0)->getInterfaceType();
+      if (!paramType)
+        return;
+      // Key by nominal decl for concrete/generic nominal params (Set<Element>
+      // and Set<Int> both key as Set). For bare type params (T, Element alone)
+      // use a null CanType as a wildcard — these inits accept any source type
+      // and must be checked on every lookup.
+      CanType key;
+      auto paramCanType = paramType->getCanonicalType();
+      if (paramCanType->is<GenericTypeParamType>())
+        key = CanType(); // wildcard
+      else if (auto *nominal = paramType->getAnyNominal())
+        key = nominal->getDeclaredType()->getCanonicalType();
+      else
+        key = paramCanType;
+      ImplicitConversionInits->map[key].push_back(ctor);
+    };
+    for (auto *member : getMembers())
+      consider(member);
+    for (auto *ext : const_cast<NominalTypeDecl *>(this)->getExtensions())
+      for (auto *member : ext->getMembers())
+        consider(member);
+  }
+  // Look up by nominal decl (handles generic nominal params like Set<Element>
+  // matching Set<Int>), then also always check the wildcard bucket (null key)
+  // for bare type-param inits like `init(_ v: T)` that accept any source type.
+  CanType key;
+  if (auto *nominal = fromType->getAnyNominal())
+    key = nominal->getDeclaredType()->getCanonicalType();
+  else
+    key = fromType;
+
+  llvm::TinyPtrVector<ConstructorDecl *> results;
+  auto appendBucket = [&](CanType k) {
+    auto it = ImplicitConversionInits->map.find(k);
+    if (it != ImplicitConversionInits->map.end())
+      for (auto *ctor : it->second)
+        results.push_back(ctor);
+  };
+  appendBucket(key);
+  if (key != CanType()) // wildcard bucket not already searched
+    appendBucket(CanType());
+
+  // Cache the merged result under fromType for future lookups.
+  if (!results.empty())
+    ImplicitConversionInits->map[fromType] = results;
+
+  auto it = ImplicitConversionInits->map.find(fromType);
+  if (it == ImplicitConversionInits->map.end())
+    return {};
+  return it->second;
+}
+
 std::optional<KeyPathTypeKind> NominalTypeDecl::getKeyPathTypeKind() const {
   auto &ctx = getASTContext();
 #define CASE(NAME) if (this == ctx.get##NAME##Decl()) return KPTK_##NAME;

@@ -9310,5 +9310,11 @@ GROUPED_WARNING(oslog_missing_string_section,OSLog,none,
 GROUPED_ERROR(oslog_string_section_not_literal,OSLog,none,
               "global variable 'osLogStringSectionName' requires a string literal initializer", ())
 
+WARNING(warn_implicit_init_duplicate,none,
+        "ambiguous @implicit init: multiple inits accept %0; the first declared will be used",
+        (Type))
+NOTE(note_implicit_init_duplicate_here,none,
+     "also declared here", ())
+
 #define UNDEFINE_DIAGNOSTIC_MACROS
 #include "DefineDiagnosticMacros.h"

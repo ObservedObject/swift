@@ -5318,25 +5318,17 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   auto fromCanTypeWithOptional = fromTypeWithOptional->getCanonicalType();
 
   // Returns 0 (no match), 1 (stripped match), or 2 (exact optional match).
-  // Higher priority wins, allowing a single pass to find the best candidate.
-  auto matchPriority = [&](Decl *member, Type &outInferredToType) -> int {
-    auto *ctor = dyn_cast<ConstructorDecl>(member);
-    if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
-        ctor->isInvalid())
-      return 0;
-
+  // Higher priority wins. Candidates come pre-filtered from the cache so we
+  // only need the generic binding and requirements check here.
+  auto matchPriority = [&](ConstructorDecl *ctor, Type &outInferredToType) -> int {
     // Reject effectful initializers: the synthesized call site has no
     // try/await, so applying a throwing or async @implicit init would be
     // unsound.
     if (ctor->hasThrows() || ctor->hasAsync())
       return 0;
 
-    auto *params = ctor->getParameters();
-    if (!params || params->size() != 1)
-      return 0;
-
     Type resultType = ctor->getResultInterfaceType();
-    Type paramType = params->get(0)->getInterfaceType();
+    Type paramType = ctor->getParameters()->get(0)->getInterfaceType();
     if (!resultType || !paramType)
       return 0;
 
@@ -5463,38 +5455,62 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     return 0;
   };
 
-  // Single pass over members and extensions, tracking the highest-priority
-  // match (2 = exact optional, 1 = stripped). Stop early on priority 2.
+  // Use the cache on the nominal type to get pre-filtered candidates rather
+  // than scanning all members and extensions on every call.
+  // Try exact-optional match first (priority 2), then stripped (priority 1).
   ConstructorDecl *best = nullptr;
   int bestPriority = 0;
   Type bestInferredToType;
 
-  auto consider = [&](Decl *member) {
+  auto consider = [&](ConstructorDecl *ctor) {
     Type inferredToType;
-    int priority = matchPriority(member, inferredToType);
+    // Wrap in a Decl* for matchPriority which expects a Decl.
+    int priority = matchPriority(ctor, inferredToType);
     if (priority > bestPriority) {
       bestPriority = priority;
-      best = cast<ConstructorDecl>(member);
+      best = ctor;
       bestInferredToType = inferredToType;
     }
   };
 
-  for (auto *member : toNominal->getMembers()) {
-    consider(member);
-    if (bestPriority == 2) break;
-  }
-  if (bestPriority < 2) {
-    for (auto *extension : toNominal->getExtensions()) {
-      for (auto *member : extension->getMembers()) {
-        consider(member);
-        if (bestPriority == 2) break;
-      }
-      if (bestPriority == 2) break;
+  for (auto *ctor : toNominal->getImplicitConversionInits(fromCanTypeWithOptional))
+    consider(ctor);
+
+  if (bestPriority < 2)
+    for (auto *ctor : toNominal->getImplicitConversionInits(fromCanType))
+      consider(ctor);
+
+  // Warn if the cache has more than one candidate for the winning fromType.
+  // This fires once per type-check of the ambiguous expression, which is
+  // Warn if multiple @implicit inits genuinely accept the same source type.
+  // Filter to only candidates whose parameter type exactly matches winningFrom
+  // (after optional-stripping as appropriate) to avoid false positives from
+  // wildcard/generic inits that happen to share the same cache bucket.
+  if (best) {
+    toType = bestInferredToType;
+    CanType winningFrom = (bestPriority == 2) ? fromCanTypeWithOptional
+                                              : fromCanType;
+    auto candidates = toNominal->getImplicitConversionInits(winningFrom);
+    // Count only those whose param canonical type is winningFrom.
+    SmallVector<ConstructorDecl *, 2> exact;
+    for (auto *ctor : candidates) {
+      auto *params = ctor->getParameters();
+      if (!params || params->size() != 1)
+        continue;
+      auto pt = params->get(0)->getInterfaceType();
+      if (pt && pt->getCanonicalType() == winningFrom)
+        exact.push_back(ctor);
+    }
+    if (exact.size() > 1) {
+      auto &diags = getASTContext().Diags;
+      diags.diagnose(best->getLoc(), diag::warn_implicit_init_duplicate,
+                     fromTypeWithOptional);
+      for (auto *ctor : exact)
+        if (ctor != best)
+          diags.diagnose(ctor->getLoc(),
+                         diag::note_implicit_init_duplicate_here);
     }
   }
-
-  if (best)
-    toType = bestInferredToType;
   return best;
 }
 
