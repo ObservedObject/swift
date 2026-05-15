@@ -5321,8 +5321,8 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   using ImplicitConversionResult = std::pair<ConstructorDecl *, CanType>;
   using ImplicitConversionResultCache =
       llvm::DenseMap<CanType, ImplicitConversionResult>;
-  thread_local static const ASTContext *cachedContext = nullptr;
-  thread_local static
+  static thread_local const ASTContext *cachedContext = nullptr;
+  static thread_local
       llvm::DenseMap<const NominalTypeDecl *, ImplicitConversionResultCache>
           implicitConversionResults;
   if (cachedContext != &getASTContext()) {
