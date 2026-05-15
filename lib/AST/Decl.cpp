@@ -6184,67 +6184,22 @@ bool NominalTypeDecl::isOptionalDecl() const {
   return this == getASTContext().getOptionalDecl();
 }
 
-ArrayRef<ConstructorDecl *>
-NominalTypeDecl::getImplicitConversionInits(NominalTypeDecl *fromNominal) const {
-  // Build the cache lazily on first access, walking all members and extensions.
-  // Heap-allocated because NominalTypeDecl is BumpPtrAllocated and the
-  // containers have non-trivial destructors.
-  //
-  // byNominal keys on the NominalTypeDecl * of the parameter type:
-  //   init(s: Set<Element>)     -> key = Set's NominalTypeDecl
-  //   init(p: UnsafePointer<T>) -> key = UnsafePointer's NominalTypeDecl
-  //
-  // Inits with a bare generic type parameter (T, Element, etc.) have no
-  // nominal key. They are collected during build and then eagerly merged into
-  // every byNominal bucket (so all lookups get the full candidate set without
-  // needing a lazy-merge tracker). They are also stored in `fallback` to
-  // handle queries where fromNominal has no byNominal entry.
-  if (!ImplicitConversionInits) {
-    ImplicitConversionInits = new ImplicitConversionInitCache();
-    llvm::SmallVector<ConstructorDecl *, 2> generics;
-
-    auto consider = [&](Decl *member) {
-      auto *ctor = dyn_cast<ConstructorDecl>(member);
-      if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
-          ctor->isInvalid())
-        return;
-      auto *params = ctor->getParameters();
-      if (!params || params->size() != 1)
-        return;
-      auto paramType = params->get(0)->getInterfaceType();
-      if (!paramType)
-        return;
-      if (auto *paramNominal = paramType->getAnyNominal())
-        ImplicitConversionInits->byNominal[paramNominal].push_back(ctor);
-      else
-        generics.push_back(ctor);
-    };
-    for (auto *member : getMembers())
-      consider(member);
-    for (auto *ext : const_cast<NominalTypeDecl *>(this)->getExtensions())
-      for (auto *member : ext->getMembers())
-        consider(member);
-
-    // Eagerly merge generic-param inits into all byNominal buckets so that
-    // every lookup returns the complete candidate list without any per-query
-    // tracking. Store them in `fallback` for from-types with no byNominal
-    // entry (e.g. fromNominal == nullptr or an unrelated nominal).
-    if (!generics.empty()) {
-      for (auto &kv : ImplicitConversionInits->byNominal)
-        for (auto *ctor : generics)
-          kv.second.push_back(ctor);
-      for (auto *ctor : generics)
-        ImplicitConversionInits->fallback.push_back(ctor);
-    }
-  }
-
-  if (!fromNominal)
-    return ImplicitConversionInits->fallback;
-
-  auto it = ImplicitConversionInits->byNominal.find(fromNominal);
-  if (it == ImplicitConversionInits->byNominal.end())
-    return ImplicitConversionInits->fallback;
+std::optional<std::pair<ConstructorDecl *, CanType>>
+NominalTypeDecl::getCachedImplicitConversion(CanType fromType) const {
+  if (!ImplicitConversionResults)
+    return std::nullopt;
+  auto it = ImplicitConversionResults->find(fromType);
+  if (it == ImplicitConversionResults->end())
+    return std::nullopt;
   return it->second;
+}
+
+void NominalTypeDecl::setCachedImplicitConversion(CanType fromType,
+                                                   ConstructorDecl *ctor,
+                                                   CanType resolvedToType) {
+  if (!ImplicitConversionResults)
+    ImplicitConversionResults = new ImplicitConversionResultCache();
+  (*ImplicitConversionResults)[fromType] = {ctor, resolvedToType};
 }
 
 std::optional<KeyPathTypeKind> NominalTypeDecl::getKeyPathTypeKind() const {

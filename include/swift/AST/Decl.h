@@ -4451,24 +4451,14 @@ class NominalTypeDecl : public GenericTypeDecl, public IterableDeclContext {
   /// kind of type cannot have Objective-C methods.
   bool createObjCMethodLookup();
 
-  /// Cache for @implicit single-argument initializers. Built lazily on first
-  /// call to getImplicitConversionInits(). Heap-allocated because
-  /// NominalTypeDecl is BumpPtrAllocated and DenseMap/TinyPtrVector have
-  /// non-trivial destructors.
-  ///
-  /// byNominal: keyed by the NominalTypeDecl of the parameter type.
-  ///   e.g. init(s: Set<Element>) -> key = Set's NominalTypeDecl
-  ///   e.g. init(p: UnsafePointer<CChar>) -> key = UnsafePointer's NominalTypeDecl
-  ///   Generic-param inits (init(_ v: T)) are merged into every bucket at build
-  ///   time so lookups always return the complete candidate list in O(1).
-  /// fallback: returned when fromNominal has no byNominal entry; contains only
-  ///   the generic-param inits (or is empty if none exist).
-  struct ImplicitConversionInitCache {
-    llvm::DenseMap<NominalTypeDecl *,
-                   llvm::TinyPtrVector<ConstructorDecl *>> byNominal;
-    llvm::TinyPtrVector<ConstructorDecl *> fallback;
-  };
-  mutable ImplicitConversionInitCache *ImplicitConversionInits = nullptr;
+  /// Memoized results of getImplicitConversion() calls targeting this nominal
+  /// as the destination type. Key: canonical fromType (before optional
+  /// stripping). Value: {ctor, resolvedToType} where ctor is nullptr when no
+  /// @implicit init matches. Absent key means the pair has not been evaluated.
+  /// Heap-allocated because NominalTypeDecl is BumpPtrAllocated.
+  using ImplicitConversionResultCache =
+      llvm::DenseMap<CanType, std::pair<ConstructorDecl *, CanType>>;
+  mutable ImplicitConversionResultCache *ImplicitConversionResults = nullptr;
 
   friend class ASTContext;
   friend class MemberLookupTable;
@@ -4683,14 +4673,16 @@ public:
   /// the type is of a kind which cannot contain @objc methods.
   void recordObjCMethod(AbstractFunctionDecl *method, ObjCSelector selector);
 
-  /// Returns all @implicit-marked single-argument initializers on this type
-  /// (including extensions) whose parameter type has the given nominal, plus
-  /// any inits with a bare generic type-parameter (which may match any source
-  /// type and are always included for matchPriority to filter).
-  /// If \p fromNominal is null only the generic list is returned.
-  /// The cache is built lazily on first call.
-  ArrayRef<ConstructorDecl *>
-  getImplicitConversionInits(NominalTypeDecl *fromNominal) const;
+  /// Look up a memoized getImplicitConversion result.  Returns nullopt if the
+  /// (fromType → self) pair has not been evaluated yet; returns {nullptr, {}}
+  /// if evaluated and no match was found; returns {ctor, resolvedToType} on a
+  /// hit.
+  std::optional<std::pair<ConstructorDecl *, CanType>>
+  getCachedImplicitConversion(CanType fromType) const;
+
+  /// Record the result of a getImplicitConversion evaluation.
+  void setCachedImplicitConversion(CanType fromType, ConstructorDecl *ctor,
+                                   CanType resolvedToType);
 
   /// Is this the decl for Optional<T>?
   bool isOptionalDecl() const;

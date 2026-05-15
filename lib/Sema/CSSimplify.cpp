@@ -5455,16 +5455,33 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     return 0;
   };
 
-  // Use the cache on the nominal type to get pre-filtered candidates.
-  // Key by the NominalTypeDecl of the from-type so that init(s: Set<Element>)
-  // is found by a lookup for Set<Int>, Set<Double>, etc. without iterating
-  // all members. Bare generic-param inits are merged into the bucket on first
-  // use and checked by matchPriority for actual type compatibility.
+  // Check the memoized result cache on toNominal.  The cache is keyed by the
+  // canonical fromType (before optional stripping) so that both priority-1 and
+  // priority-2 matches are covered by a single entry.
+  auto fromCacheKey = fromTypeWithOptional->getCanonicalType();
+  if (auto cached = toNominal->getCachedImplicitConversion(fromCacheKey)) {
+    auto [cachedCtor, cachedToType] = *cached;
+    if (!cachedCtor)
+      return nullptr;
+    toType = cachedToType;
+    return cachedCtor;
+  }
+
+  // Cache miss: scan all @implicit single-argument inits on toNominal.
   ConstructorDecl *best = nullptr;
   int bestPriority = 0;
   Type bestInferredToType;
+  SmallVector<ConstructorDecl *, 4> allCandidates;
 
-  auto consider = [&](ConstructorDecl *ctor) {
+  auto scanMember = [&](Decl *member) {
+    auto *ctor = dyn_cast<ConstructorDecl>(member);
+    if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
+        ctor->isInvalid())
+      return;
+    auto *params = ctor->getParameters();
+    if (!params || params->size() != 1)
+      return;
+    allCandidates.push_back(ctor);
     Type inferredToType;
     int priority = matchPriority(ctor, inferredToType);
     if (priority > bestPriority) {
@@ -5474,46 +5491,43 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     }
   };
 
-  // First pass: with optional wrapper (priority-2 candidates, e.g.
-  // init(_ opt: UnsafeMutablePointer<CChar>?)).
-  NominalTypeDecl *fromNominalOpt = fromTypeWithOptional->getAnyNominal();
-  NominalTypeDecl *fromNominal = fromType->getAnyNominal();
-  for (auto *ctor : toNominal->getImplicitConversionInits(fromNominalOpt))
-    consider(ctor);
+  for (auto *member : toNominal->getMembers())
+    scanMember(member);
+  for (auto *ext : toNominal->getExtensions())
+    for (auto *member : ext->getMembers())
+      scanMember(member);
 
-  // Second pass: without optional wrapper (priority-1 candidates). Skip if
-  // we already have a priority-2 match, or the nominal is the same (non-optional
-  // from-type, so the first pass already covered it).
-  if (bestPriority < 2 && fromNominal != fromNominalOpt)
-    for (auto *ctor : toNominal->getImplicitConversionInits(fromNominal))
-      consider(ctor);
+  if (!best) {
+    toNominal->setCachedImplicitConversion(fromCacheKey, nullptr, CanType());
+    return nullptr;
+  }
+
+  toType = bestInferredToType;
 
   // Warn when multiple @implicit inits accept the same source type.
-  if (best) {
-    toType = bestInferredToType;
-    CanType winningFrom = (bestPriority == 2) ? fromCanTypeWithOptional
-                                              : fromCanType;
-    NominalTypeDecl *winningNominal = (bestPriority == 2) ? fromNominalOpt
-                                                          : fromNominal;
-    SmallVector<ConstructorDecl *, 2> exact;
-    for (auto *ctor : toNominal->getImplicitConversionInits(winningNominal)) {
-      auto *params = ctor->getParameters();
-      if (!params || params->size() != 1)
-        continue;
-      auto pt = params->get(0)->getInterfaceType();
-      if (pt && pt->getCanonicalType() == winningFrom)
-        exact.push_back(ctor);
-    }
-    if (exact.size() > 1) {
-      auto &diags = getASTContext().Diags;
-      diags.diagnose(best->getLoc(), diag::warn_implicit_init_duplicate,
-                     fromTypeWithOptional);
-      for (auto *ctor : exact)
-        if (ctor != best)
-          diags.diagnose(ctor->getLoc(),
-                         diag::note_implicit_init_duplicate_here);
-    }
+  CanType winningFrom = (bestPriority == 2) ? fromCanTypeWithOptional
+                                            : fromCanType;
+  SmallVector<ConstructorDecl *, 2> exact;
+  for (auto *ctor : allCandidates) {
+    auto *params = ctor->getParameters();
+    if (!params || params->size() != 1)
+      continue;
+    auto pt = params->get(0)->getInterfaceType();
+    if (pt && pt->getCanonicalType() == winningFrom)
+      exact.push_back(ctor);
   }
+  if (exact.size() > 1) {
+    auto &diags = getASTContext().Diags;
+    diags.diagnose(best->getLoc(), diag::warn_implicit_init_duplicate,
+                   fromTypeWithOptional);
+    for (auto *ctor : exact)
+      if (ctor != best)
+        diags.diagnose(ctor->getLoc(),
+                       diag::note_implicit_init_duplicate_here);
+  }
+
+  toNominal->setCachedImplicitConversion(fromCacheKey, best,
+                                         bestInferredToType->getCanonicalType());
   return best;
 }
 
