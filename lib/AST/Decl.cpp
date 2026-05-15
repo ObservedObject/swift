@@ -6184,24 +6184,6 @@ bool NominalTypeDecl::isOptionalDecl() const {
   return this == getASTContext().getOptionalDecl();
 }
 
-std::optional<std::pair<ConstructorDecl *, CanType>>
-NominalTypeDecl::getCachedImplicitConversion(CanType fromType) const {
-  if (!ImplicitConversionResults)
-    return std::nullopt;
-  auto it = ImplicitConversionResults->find(fromType);
-  if (it == ImplicitConversionResults->end())
-    return std::nullopt;
-  return it->second;
-}
-
-void NominalTypeDecl::setCachedImplicitConversion(CanType fromType,
-                                                   ConstructorDecl *ctor,
-                                                   CanType resolvedToType) {
-  if (!ImplicitConversionResults)
-    ImplicitConversionResults = new ImplicitConversionResultCache();
-  (*ImplicitConversionResults)[fromType] = {ctor, resolvedToType};
-}
-
 std::optional<KeyPathTypeKind> NominalTypeDecl::getKeyPathTypeKind() const {
   auto &ctx = getASTContext();
 #define CASE(NAME) if (this == ctx.get##NAME##Decl()) return KPTK_##NAME;

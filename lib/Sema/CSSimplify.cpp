@@ -5318,16 +5318,26 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   auto fromCanType = fromType->getCanonicalType();
   auto fromCanTypeWithOptional = fromTypeWithOptional->getCanonicalType();
 
-  // Check the memoized result cache on toNominal. The cache is keyed by the
+  using ImplicitConversionResult = std::pair<ConstructorDecl *, CanType>;
+  using ImplicitConversionResultCache =
+      llvm::DenseMap<CanType, ImplicitConversionResult>;
+  static llvm::DenseMap<const NominalTypeDecl *, ImplicitConversionResultCache>
+      implicitConversionResults;
+
+  // Check the memoized result cache keyed by destination nominal, then by
   // canonical fromType (before optional stripping) so that both priority-1
   // and priority-2 matches are covered by a single entry.
   auto fromCacheKey = fromCanTypeWithOptional;
-  if (auto cached = toNominal->getCachedImplicitConversion(fromCacheKey)) {
-    auto [cachedCtor, cachedToType] = *cached;
-    if (!cachedCtor)
-      return nullptr;
-    toType = cachedToType;
-    return cachedCtor;
+  if (auto nominalIt = implicitConversionResults.find(toNominal);
+      nominalIt != implicitConversionResults.end()) {
+    auto cacheIt = nominalIt->second.find(fromCacheKey);
+    if (cacheIt != nominalIt->second.end()) {
+      auto [cachedCtor, cachedToType] = cacheIt->second;
+      if (!cachedCtor)
+        return nullptr;
+      toType = cachedToType;
+      return cachedCtor;
+    }
   }
 
   // Try to match a single @implicit init candidate. Returns the priority of
@@ -5491,7 +5501,7 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
       consider(member);
 
   if (bestCandidates.empty()) {
-    toNominal->setCachedImplicitConversion(fromCacheKey, nullptr, CanType());
+    implicitConversionResults[toNominal][fromCacheKey] = {nullptr, CanType()};
     return nullptr;
   }
 
@@ -5505,8 +5515,8 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
       diags.diagnose(candidate, diag::ambiguous_implicit_conversion_candidate);
   }
 
-  toNominal->setCachedImplicitConversion(fromCacheKey, bestCandidates[0],
-                                         bestInferredToType->getCanonicalType());
+  implicitConversionResults[toNominal][fromCacheKey] =
+      {bestCandidates[0], bestInferredToType->getCanonicalType()};
   toType = bestInferredToType;
   return bestCandidates[0];
 }

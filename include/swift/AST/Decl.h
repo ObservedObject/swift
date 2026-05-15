@@ -4451,15 +4451,6 @@ class NominalTypeDecl : public GenericTypeDecl, public IterableDeclContext {
   /// kind of type cannot have Objective-C methods.
   bool createObjCMethodLookup();
 
-  /// Memoized results of getImplicitConversion() calls targeting this nominal
-  /// as the destination type. Key: canonical fromType (before optional
-  /// stripping). Value: {ctor, resolvedToType} where ctor is nullptr when no
-  /// @implicit init matches. Absent key means the pair has not been evaluated.
-  /// Heap-allocated because NominalTypeDecl is BumpPtrAllocated.
-  using ImplicitConversionResultCache =
-      llvm::DenseMap<CanType, std::pair<ConstructorDecl *, CanType>>;
-  mutable ImplicitConversionResultCache *ImplicitConversionResults = nullptr;
-
   friend class ASTContext;
   friend class MemberLookupTable;
   friend class ConformanceLookupTable;
@@ -4672,17 +4663,6 @@ public:
   /// Record the presence of an @objc method with the given selector. No-op if
   /// the type is of a kind which cannot contain @objc methods.
   void recordObjCMethod(AbstractFunctionDecl *method, ObjCSelector selector);
-
-  /// Look up a memoized getImplicitConversion result. Returns nullopt if the
-  /// (fromType → self) pair has not been evaluated yet; returns {nullptr, {}}
-  /// if evaluated and no match was found; returns {ctor, resolvedToType} on a
-  /// hit.
-  std::optional<std::pair<ConstructorDecl *, CanType>>
-  getCachedImplicitConversion(CanType fromType) const;
-
-  /// Record the result of a getImplicitConversion evaluation.
-  void setCachedImplicitConversion(CanType fromType, ConstructorDecl *ctor,
-                                   CanType resolvedToType);
 
   /// Is this the decl for Optional<T>?
   bool isOptionalDecl() const;
