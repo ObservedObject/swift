@@ -5455,30 +5455,45 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     return 0;
   };
 
-  // Single pass over all @implicit inits on the target nominal type.
-  // The cache returns a flat list pre-filtered to single-argument @implicit
-  // inits; matchPriority does the actual from-type matching.
+  // Use the cache on the nominal type to get pre-filtered candidates rather
+  // than scanning all members and extensions on every call.
+  // Try exact-optional match first (priority 2), then stripped (priority 1).
   ConstructorDecl *best = nullptr;
   int bestPriority = 0;
   Type bestInferredToType;
 
-  for (auto *ctor : toNominal->getImplicitConversionInits()) {
+  auto consider = [&](ConstructorDecl *ctor) {
     Type inferredToType;
+    // Wrap in a Decl* for matchPriority which expects a Decl.
     int priority = matchPriority(ctor, inferredToType);
     if (priority > bestPriority) {
       bestPriority = priority;
       best = ctor;
       bestInferredToType = inferredToType;
     }
-  }
+  };
 
-  // Warn when multiple @implicit inits accept the same source type.
+  for (auto *ctor : toNominal->getImplicitConversionInits(fromCanTypeWithOptional))
+    consider(ctor);
+
+  if (bestPriority < 2)
+    for (auto *ctor : toNominal->getImplicitConversionInits(fromCanType))
+      consider(ctor);
+
+  // Warn if the cache has more than one candidate for the winning fromType.
+  // This fires once per type-check of the ambiguous expression, which is
+  // Warn if multiple @implicit inits genuinely accept the same source type.
+  // Filter to only candidates whose parameter type exactly matches winningFrom
+  // (after optional-stripping as appropriate) to avoid false positives from
+  // wildcard/generic inits that happen to share the same cache bucket.
   if (best) {
     toType = bestInferredToType;
     CanType winningFrom = (bestPriority == 2) ? fromCanTypeWithOptional
                                               : fromCanType;
+    auto candidates = toNominal->getImplicitConversionInits(winningFrom);
+    // Count only those whose param canonical type is winningFrom.
     SmallVector<ConstructorDecl *, 2> exact;
-    for (auto *ctor : toNominal->getImplicitConversionInits()) {
+    for (auto *ctor : candidates) {
       auto *params = ctor->getParameters();
       if (!params || params->size() != 1)
         continue;
