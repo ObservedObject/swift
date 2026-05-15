@@ -6191,16 +6191,18 @@ NominalTypeDecl::getImplicitConversionInits(NominalTypeDecl *fromNominal) const 
   // containers have non-trivial destructors.
   //
   // byNominal keys on the NominalTypeDecl * of the parameter type:
-  //   init(s: Set<Element>)      -> key = Set's NominalTypeDecl
-  //   init(p: UnsafePointer<T>)  -> key = UnsafePointer's NominalTypeDecl
-  // This lets us find init(s: Set<Element>) by looking up Set, regardless
-  // of whether the from-type is Set<Int>, Set<Double>, etc.
+  //   init(s: Set<Element>)     -> key = Set's NominalTypeDecl
+  //   init(p: UnsafePointer<T>) -> key = UnsafePointer's NominalTypeDecl
   //
-  // generic holds inits whose parameter is a bare generic type parameter
-  // (T, Element, etc.) with no nominal, so they must be considered for any
-  // from-type. matchPriority handles the actual type binding.
+  // Inits with a bare generic type parameter (T, Element, etc.) have no
+  // nominal key. They are collected during build and then eagerly merged into
+  // every byNominal bucket (so all lookups get the full candidate set without
+  // needing a lazy-merge tracker). They are also stored in `fallback` to
+  // handle queries where fromNominal has no byNominal entry.
   if (!ImplicitConversionInits) {
     ImplicitConversionInits = new ImplicitConversionInitCache();
+    llvm::SmallVector<ConstructorDecl *, 2> generics;
+
     auto consider = [&](Decl *member) {
       auto *ctor = dyn_cast<ConstructorDecl>(member);
       if (!ctor || !ctor->getAttrs().hasAttribute<ImplicitAttr>() ||
@@ -6215,38 +6217,33 @@ NominalTypeDecl::getImplicitConversionInits(NominalTypeDecl *fromNominal) const 
       if (auto *paramNominal = paramType->getAnyNominal())
         ImplicitConversionInits->byNominal[paramNominal].push_back(ctor);
       else
-        ImplicitConversionInits->generic.push_back(ctor);
+        generics.push_back(ctor);
     };
     for (auto *member : getMembers())
       consider(member);
     for (auto *ext : const_cast<NominalTypeDecl *>(this)->getExtensions())
       for (auto *member : ext->getMembers())
         consider(member);
+
+    // Eagerly merge generic-param inits into all byNominal buckets so that
+    // every lookup returns the complete candidate list without any per-query
+    // tracking. Store them in `fallback` for from-types with no byNominal
+    // entry (e.g. fromNominal == nullptr or an unrelated nominal).
+    if (!generics.empty()) {
+      for (auto &kv : ImplicitConversionInits->byNominal)
+        for (auto *ctor : generics)
+          kv.second.push_back(ctor);
+      for (auto *ctor : generics)
+        ImplicitConversionInits->fallback.push_back(ctor);
+    }
   }
 
-  // If the from-type has no nominal (e.g. it is itself a bare generic param),
-  // only the generic-param inits can ever match.
   if (!fromNominal)
-    return ImplicitConversionInits->generic;
-
-  // For non-null fromNominal: return byNominal[fromNominal] merged with the
-  // generic list. On first query for a given fromNominal we append the generic
-  // entries directly into the byNominal bucket and mark it done so subsequent
-  // calls return the stable ArrayRef in O(1) without re-merging.
-  // Use find() to avoid creating empty byNominal entries for nominals that
-  // have no @implicit inits with that parameter nominal.
-  auto &merged = ImplicitConversionInits->mergedNominals;
-  if (!ImplicitConversionInits->generic.empty() && !merged.count(fromNominal)) {
-    // Merge generic list into the byNominal bucket (creates entry if needed).
-    auto &bucket = ImplicitConversionInits->byNominal[fromNominal];
-    for (auto *ctor : ImplicitConversionInits->generic)
-      bucket.push_back(ctor);
-    merged.insert(fromNominal);
-  }
+    return ImplicitConversionInits->fallback;
 
   auto it = ImplicitConversionInits->byNominal.find(fromNominal);
   if (it == ImplicitConversionInits->byNominal.end())
-    return ImplicitConversionInits->generic;
+    return ImplicitConversionInits->fallback;
   return it->second;
 }
 

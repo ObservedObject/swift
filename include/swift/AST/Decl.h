@@ -4451,22 +4451,22 @@ class NominalTypeDecl : public GenericTypeDecl, public IterableDeclContext {
   /// kind of type cannot have Objective-C methods.
   bool createObjCMethodLookup();
 
-  /// Cache for @implicit single-argument initializers. Built lazily.
-  /// Heap-allocated because NominalTypeDecl is BumpPtrAllocated and
-  /// DenseMap/SmallVector have non-trivial destructors.
+  /// Cache for @implicit single-argument initializers. Built lazily on first
+  /// call to getImplicitConversionInits(). Heap-allocated because
+  /// NominalTypeDecl is BumpPtrAllocated and DenseMap/TinyPtrVector have
+  /// non-trivial destructors.
   ///
   /// byNominal: keyed by the NominalTypeDecl of the parameter type.
   ///   e.g. init(s: Set<Element>) -> key = Set's NominalTypeDecl
   ///   e.g. init(p: UnsafePointer<CChar>) -> key = UnsafePointer's NominalTypeDecl
-  /// generic: inits whose parameter is a bare generic type param (T, Element)
-  ///   or another non-nominal type; appended into byNominal buckets on first
-  ///   use and must be searched for every distinct fromNominal.
-  /// mergedNominals: tracks which byNominal buckets have had generic appended.
+  ///   Generic-param inits (init(_ v: T)) are merged into every bucket at build
+  ///   time so lookups always return the complete candidate list in O(1).
+  /// fallback: returned when fromNominal has no byNominal entry; contains only
+  ///   the generic-param inits (or is empty if none exist).
   struct ImplicitConversionInitCache {
     llvm::DenseMap<NominalTypeDecl *,
                    llvm::TinyPtrVector<ConstructorDecl *>> byNominal;
-    llvm::SmallVector<ConstructorDecl *, 2> generic;
-    llvm::DenseSet<NominalTypeDecl *> mergedNominals;
+    llvm::TinyPtrVector<ConstructorDecl *> fallback;
   };
   mutable ImplicitConversionInitCache *ImplicitConversionInits = nullptr;
 
