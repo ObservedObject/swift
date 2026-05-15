@@ -5321,13 +5321,14 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   using ImplicitConversionResult = std::pair<ConstructorDecl *, CanType>;
   using ImplicitConversionResultCache =
       llvm::DenseMap<CanType, ImplicitConversionResult>;
-  static const ConstraintSystem *cachedCS = nullptr;
+  // The compiler is single-threaded, so a plain local static cache is
+  // sufficient here. Clear it when the ASTContext changes to avoid retaining
+  // entries across unrelated compiler invocations.
   static const ASTContext *cachedContext = nullptr;
   static llvm::DenseMap<const NominalTypeDecl *, ImplicitConversionResultCache>
       implicitConversionResults;
-  if (cachedCS != this || cachedContext != &getASTContext()) {
+  if (cachedContext != &getASTContext()) {
     implicitConversionResults.clear();
-    cachedCS = this;
     cachedContext = &getASTContext();
   }
 
