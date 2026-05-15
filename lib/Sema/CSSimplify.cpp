@@ -6049,7 +6049,7 @@ bool ConstraintSystem::repairFailures(
       }
       if (locatorOK) {
         Type resolvedToType = rhs;
-        if (getImplicitConversion(lhs, resolvedToType, /*diagnose=*/true)) {
+        if (getImplicitConversion(lhs, resolvedToType)) {
           if (!resolvedToType->isEqual(rhs) && rhs->hasTypeVariable())
             addConstraint(ConstraintKind::Bind, rhs, resolvedToType,
                           getConstraintLocator(locator));
