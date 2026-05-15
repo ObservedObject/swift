@@ -5337,13 +5337,15 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   // and priority-2 matches are covered by a single entry.
   auto fromCacheKey = fromCanTypeWithOptional;
   auto &toNominalCache = implicitConversionResults[toNominal];
-  if (auto cacheIt = toNominalCache.find(fromCacheKey);
-      cacheIt != toNominalCache.end()) {
-    auto [cachedCtor, cachedToType] = cacheIt->second;
-    if (!cachedCtor)
-      return nullptr;
-    toType = cachedToType;
-    return cachedCtor;
+  if (!diagnose) {
+    if (auto cacheIt = toNominalCache.find(fromCacheKey);
+        cacheIt != toNominalCache.end()) {
+      auto [cachedCtor, cachedToType] = cacheIt->second;
+      if (!cachedCtor)
+        return nullptr;
+      toType = cachedToType;
+      return cachedCtor;
+    }
   }
 
   // Try to match a single @implicit init candidate. Returns the priority of
