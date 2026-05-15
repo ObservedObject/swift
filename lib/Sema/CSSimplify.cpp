@@ -5318,6 +5318,18 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   auto fromCanType = fromType->getCanonicalType();
   auto fromCanTypeWithOptional = fromTypeWithOptional->getCanonicalType();
 
+  // Check the memoized result cache on toNominal. The cache is keyed by the
+  // canonical fromType (before optional stripping) so that both priority-1
+  // and priority-2 matches are covered by a single entry.
+  auto fromCacheKey = fromCanTypeWithOptional;
+  if (auto cached = toNominal->getCachedImplicitConversion(fromCacheKey)) {
+    auto [cachedCtor, cachedToType] = *cached;
+    if (!cachedCtor)
+      return nullptr;
+    toType = cachedToType;
+    return cachedCtor;
+  }
+
   // Try to match a single @implicit init candidate. Returns the priority of
   // the match (2 = exact optional, 1 = stripped, 0 = no match) and sets
   // outInferredToType on success.
@@ -5478,8 +5490,10 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     for (auto *member : ext->getMembers())
       consider(member);
 
-  if (bestCandidates.empty())
+  if (bestCandidates.empty()) {
+    toNominal->setCachedImplicitConversion(fromCacheKey, nullptr, CanType());
     return nullptr;
+  }
 
   // If multiple candidates tied at the same priority, warn and pick the first.
   if (diagnose && bestCandidates.size() > 1) {
@@ -5491,6 +5505,8 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
       diags.diagnose(candidate, diag::ambiguous_implicit_conversion_candidate);
   }
 
+  toNominal->setCachedImplicitConversion(fromCacheKey, bestCandidates[0],
+                                         bestInferredToType->getCanonicalType());
   toType = bestInferredToType;
   return bestCandidates[0];
 }
