@@ -7430,7 +7430,8 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
       // optional wrapping from it (via lookThroughAllOptionalTypes()).
       Type originalToType = toType;
       Type resolvedToType = toType;
-      auto *decl = cs.getImplicitConversion(fromType, resolvedToType);
+      auto *decl = cs.getImplicitConversion(fromType, resolvedToType,
+                                             /*diagnose=*/true);
       if (!decl)
         return nullptr;
 

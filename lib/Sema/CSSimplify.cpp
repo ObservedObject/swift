@@ -5299,7 +5299,8 @@ static bool repairOutOfOrderArgumentsInBinaryFunction(
 /// \return true if at least some of the failures has been repaired
 /// successfully, which allows type matcher to continue.
 ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
-                                                         Type &toType) {
+                                                         Type &toType,
+                                                         bool diagnose) {
   // Simplify but do NOT strip optionals yet — an @implicit init may explicitly
   // accept an optional (e.g. `init(str: UnsafeMutablePointer<CChar>?)`), and
   // that should be preferred over one that accepts the unwrapped type.
@@ -5444,10 +5445,11 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
 
   // Scan all @implicit single-argument inits, tracking the highest-priority
   // match (2 = exact optional, 1 = stripped).
-  ConstructorDecl *best = nullptr;
+  // All candidates that match at the winning priority are collected so that
+  // ties can be diagnosed before selecting the first one.
+  SmallVector<ConstructorDecl *, 4> bestCandidates;
   int bestPriority = 0;
   Type bestInferredToType;
-  bool bestIsTied = false;
 
   auto consider = [&](Decl *member) {
     auto *ctor = dyn_cast<ConstructorDecl>(member);
@@ -5461,12 +5463,11 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     int priority = matchPriority(ctor, inferredToType);
     if (priority > bestPriority) {
       bestPriority = priority;
-      best = ctor;
+      bestCandidates.clear();
+      bestCandidates.push_back(ctor);
       bestInferredToType = inferredToType;
-      bestIsTied = false;
     } else if (priority > 0 && priority == bestPriority) {
-      // Two candidates matched at the same priority — ambiguous; suppress.
-      bestIsTied = true;
+      bestCandidates.push_back(ctor);
     }
   };
 
@@ -5476,9 +5477,21 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     for (auto *member : ext->getMembers())
       consider(member);
 
-  if (best && !bestIsTied)
-    toType = bestInferredToType;
-  return (best && !bestIsTied) ? best : nullptr;
+  if (bestCandidates.empty())
+    return nullptr;
+
+  // If multiple candidates tied at the same priority, warn and pick the first.
+  if (diagnose && bestCandidates.size() > 1) {
+    auto &diags = getASTContext().Diags;
+    diags.diagnose(bestCandidates[0],
+                   diag::ambiguous_implicit_conversion,
+                   fromType, toType);
+    for (auto *candidate : bestCandidates)
+      diags.diagnose(candidate, diag::ambiguous_implicit_conversion_candidate);
+  }
+
+  toType = bestInferredToType;
+  return bestCandidates[0];
 }
 
 bool ConstraintSystem::repairFailures(
