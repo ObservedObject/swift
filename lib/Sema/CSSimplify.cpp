@@ -5485,7 +5485,7 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
     auto &diags = getASTContext().Diags;
     diags.diagnose(bestCandidates[0],
                    diag::ambiguous_implicit_conversion,
-                   fromType, toType);
+                   fromType, bestInferredToType);
     for (auto *candidate : bestCandidates)
       diags.diagnose(candidate, diag::ambiguous_implicit_conversion_candidate);
   }
