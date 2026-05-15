@@ -5321,12 +5321,13 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   using ImplicitConversionResult = std::pair<ConstructorDecl *, CanType>;
   using ImplicitConversionResultCache =
       llvm::DenseMap<CanType, ImplicitConversionResult>;
-  static thread_local const ASTContext *cachedContext = nullptr;
-  static thread_local
-      llvm::DenseMap<const NominalTypeDecl *, ImplicitConversionResultCache>
-          implicitConversionResults;
-  if (cachedContext != &getASTContext()) {
+  static const ConstraintSystem *cachedCS = nullptr;
+  static const ASTContext *cachedContext = nullptr;
+  static llvm::DenseMap<const NominalTypeDecl *, ImplicitConversionResultCache>
+      implicitConversionResults;
+  if (cachedCS != this || cachedContext != &getASTContext()) {
     implicitConversionResults.clear();
+    cachedCS = this;
     cachedContext = &getASTContext();
   }
 
@@ -5334,16 +5335,14 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
   // canonical fromType (before optional stripping) so that both priority-1
   // and priority-2 matches are covered by a single entry.
   auto fromCacheKey = fromCanTypeWithOptional;
-  if (auto nominalIt = implicitConversionResults.find(toNominal);
-      nominalIt != implicitConversionResults.end()) {
-    auto cacheIt = nominalIt->second.find(fromCacheKey);
-    if (cacheIt != nominalIt->second.end()) {
-      auto [cachedCtor, cachedToType] = cacheIt->second;
-      if (!cachedCtor)
-        return nullptr;
-      toType = cachedToType;
-      return cachedCtor;
-    }
+  auto &toNominalCache = implicitConversionResults[toNominal];
+  if (auto cacheIt = toNominalCache.find(fromCacheKey);
+      cacheIt != toNominalCache.end()) {
+    auto [cachedCtor, cachedToType] = cacheIt->second;
+    if (!cachedCtor)
+      return nullptr;
+    toType = cachedToType;
+    return cachedCtor;
   }
 
   // Try to match a single @implicit init candidate. Returns the priority of
@@ -5507,7 +5506,7 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
       consider(member);
 
   if (bestCandidates.empty()) {
-    implicitConversionResults[toNominal][fromCacheKey] = {nullptr, CanType()};
+    toNominalCache[fromCacheKey] = {nullptr, CanType()};
     return nullptr;
   }
 
@@ -5521,7 +5520,7 @@ ConstructorDecl *ConstraintSystem::getImplicitConversion(Type fromType,
       diags.diagnose(candidate, diag::ambiguous_implicit_conversion_candidate);
   }
 
-  implicitConversionResults[toNominal][fromCacheKey] =
+  toNominalCache[fromCacheKey] =
       {bestCandidates[0], bestInferredToType->getCanonicalType()};
   toType = bestInferredToType;
   return bestCandidates[0];
