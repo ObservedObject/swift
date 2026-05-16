@@ -5101,6 +5101,7 @@ public:
   TRIVIAL_ATTR_PRINTER(IBInspectable, ib_inspectable)
   TRIVIAL_ATTR_PRINTER(IBOutlet, ib_outlet)
   TRIVIAL_ATTR_PRINTER(IBSegueAction, ib_segue_action)
+  TRIVIAL_ATTR_PRINTER(Implicit, implicit)
   TRIVIAL_ATTR_PRINTER(ImplementationOnly, implementation_only)
   TRIVIAL_ATTR_PRINTER(ImplicitSelfCapture, implicit_self_capture)
   TRIVIAL_ATTR_PRINTER(Indirect, indirect)
