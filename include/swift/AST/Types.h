@@ -2450,6 +2450,9 @@ public:
     return typealias;
   }
 
+  /// Whether this type was declared with 'subtypealias'.
+  bool isSubtypeAlias() const;
+
   /// Retrieve the parent of this type as written, e.g., the part that was
   /// written before ".", if provided.
   Type getParent() const {

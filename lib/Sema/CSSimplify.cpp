@@ -7439,6 +7439,34 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
     return formUnsolvedResult();
   }
 
+  // Subtype alias coercion: a 'subtypealias' may be implicitly converted to
+  // its underlying type (or any supertype thereof) but not the reverse.
+  // This mirrors class subtyping — Celsius -> Double is always valid, but
+  // Double -> Celsius requires an explicit cast.
+  if (kind >= ConstraintKind::Subtype) {
+    if (auto *aliasTy = dyn_cast<TypeAliasType>(type1.getPointer())) {
+      if (aliasTy->isSubtypeAlias()) {
+        // Strip the alias and try matching the underlying type against type2.
+        Type underlying = aliasTy->getSinglyDesugaredType();
+        auto result = matchTypes(underlying, type2, kind, flags, locator);
+        if (!result.isFailure())
+          return result;
+      }
+    }
+    // Block the reverse: the underlying type cannot be implicitly converted
+    // TO a subtype alias (e.g. Double -> Celsius). The alias must be stripped
+    // from type2 only for exact equality, not for coercion.
+    if (auto *aliasTy2 = dyn_cast<TypeAliasType>(type2.getPointer())) {
+      if (aliasTy2->isSubtypeAlias()) {
+        // Only allow if type1 is already the same subtype alias (exact match,
+        // handled above by the equality check) or itself a subtype alias of
+        // the same underlying chain. Anything else is a type error.
+        if (!type1->isEqual(type2))
+          return getTypeMatchFailure(locator);
+      }
+    }
+  }
+
   // If the original type on one side consisted of a tuple type with
   // unresolved pack expansion(s), let's make sure that both sides are
   // tuples to enable proper pack matching for situations like:

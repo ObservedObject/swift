@@ -6515,6 +6515,15 @@ ParserStatus Parser::parseDecl(bool IsAtStartOfLineOrPreviousHadSemi,
       break;
     }
 
+    if (Tok.isContextualKeyword("subtypealias") &&
+        peekToken().is(tok::identifier)) {
+      Tok.setKind(tok::contextual_keyword);
+      DeclResult = parseDeclTypeAlias(Flags, Attributes,
+                                      /*isSubtypeAlias=*/true);
+      MayNeedOverrideCompletion = true;
+      break;
+    }
+
     // `using @<attribute>` or `using <identifier>`
     if (Tok.isContextualKeyword("using")) {
       auto nextToken = peekToken();
@@ -7691,10 +7700,11 @@ ParserStatus Parser::parseLineDirective(bool isLine) {
 ///     'typealias' identifier generic-params? '=' type requirement-clause?
 /// \endverbatim
 ParserResult<TypeDecl> Parser::
-parseDeclTypeAlias(Parser::ParseDeclOptions Flags, DeclAttributes &Attributes) {
+parseDeclTypeAlias(Parser::ParseDeclOptions Flags, DeclAttributes &Attributes,
+                   bool isSubtypeAlias) {
   ParserPosition startPosition = getParserPosition();
 
-  SourceLoc TypeAliasLoc = consumeToken(tok::kw_typealias);
+  SourceLoc TypeAliasLoc = consumeToken(); // consumes 'typealias' or 'subtypealias'
   SourceLoc EqualLoc;
   Identifier Id;
   SourceLoc IdLoc;
@@ -7736,6 +7746,8 @@ parseDeclTypeAlias(Parser::ParseDeclOptions Flags, DeclAttributes &Attributes) {
 
   auto *TAD = new (Context) TypeAliasDecl(TypeAliasLoc, EqualLoc, Id, IdLoc,
                                           genericParams, CurDeclContext);
+  if (isSubtypeAlias)
+    TAD->markAsSubtypeAlias();
   ParserResult<TypeRepr> UnderlyingTy;
 
   if (Tok.is(tok::colon) || Tok.is(tok::equal)) {

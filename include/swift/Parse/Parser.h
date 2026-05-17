@@ -981,7 +981,8 @@ public:
                             IterableDeclContext *IDC);
 
   ParserResult<TypeDecl> parseDeclTypeAlias(ParseDeclOptions Flags,
-                                            DeclAttributes &Attributes);
+                                            DeclAttributes &Attributes,
+                                            bool isSubtypeAlias = false);
 
   ParserResult<TypeDecl> parseDeclAssociatedType(ParseDeclOptions Flags,
                                                  DeclAttributes &Attributes);
