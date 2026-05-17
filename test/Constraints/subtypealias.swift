@@ -32,13 +32,13 @@ let news: NewsURL = "https://swift.org"
 let _: URLString = news             // NewsURL -> URLString ✓
 let _: String = news                // NewsURL -> String ✓ (through URLString)
 
-// MARK: - Contravariant direction: underlying -> subtype is a type error
+// MARK: - Current model: underlying-typed results are accepted as subtypealias values
 
  let _: Celsius = 100.0            // fine
  let _: Celsius = boiling + 1.0    // currently accepted
  let _: FilePath = path + "/bin"   // currently accepted
 
-// MARK: - Two distinct subtypes of the same underlying are incompatible
+// MARK: - Current model: distinct subtypealiases of same underlying are accepted
 
  let _: Celsius = Fahrenheit(212.0)   // currently accepted
  let _ = takesDouble(boiling)         // ✓ fine — both go through Double
