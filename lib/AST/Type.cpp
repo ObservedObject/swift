@@ -2262,6 +2262,10 @@ GenericSignature TypeAliasType::getGenericSignature() const {
   return typealias->getGenericSignature();
 }
 
+bool TypeAliasType::isSubtypeAlias() const {
+  return typealias->isSubtypeAlias();
+}
+
 SubstitutionMap
 TypeAliasType::getSubstitutionMap(bool wantContextualType) const {
   auto genericSig = typealias->getGenericSignature();

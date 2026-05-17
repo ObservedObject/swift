@@ -655,11 +655,16 @@ protected:
 
   SWIFT_INLINE_BITFIELD_EMPTY(GenericTypeDecl, TypeDecl);
 
-  SWIFT_INLINE_BITFIELD(TypeAliasDecl, GenericTypeDecl, 1+1,
+  SWIFT_INLINE_BITFIELD(TypeAliasDecl, GenericTypeDecl, 1+1+1,
     /// Whether the typealias forwards perfectly to its underlying type.
     IsCompatibilityAlias : 1,
     /// Whether this was a global typealias synthesized by the debugger.
-    IsDebuggerAlias : 1
+    IsDebuggerAlias : 1,
+    /// Whether this was declared with 'subtypealias': a distinct type that
+    /// is a structural subtype of its underlying type. Values of this type
+    /// may be used where the underlying type is expected, but not vice versa
+    /// without an explicit cast.
+    IsSubtypeAlias : 1
   );
 
   SWIFT_INLINE_BITFIELD(NominalTypeDecl, GenericTypeDecl, 1+1+1,
@@ -3946,6 +3951,13 @@ public:
   void markAsDebuggerAlias(bool isDebuggerAlias) {
     Bits.TypeAliasDecl.IsDebuggerAlias = isDebuggerAlias;
   }
+
+  /// Whether this was declared with 'subtypealias'.
+  /// A subtype alias is a distinct type that is a one-way subtype of its
+  /// underlying type: values of this type may be implicitly used where the
+  /// underlying type is expected, but the reverse requires an explicit cast.
+  bool isSubtypeAlias() const { return Bits.TypeAliasDecl.IsSubtypeAlias; }
+  void markAsSubtypeAlias() { Bits.TypeAliasDecl.IsSubtypeAlias = true; }
 
   static bool classof(const Decl *D) {
     return D->getKind() == DeclKind::TypeAlias;
