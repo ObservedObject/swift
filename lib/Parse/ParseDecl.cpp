@@ -6104,6 +6104,11 @@ bool Parser::isStartOfSwiftDecl(bool allowPoundIfAttributes,
     return Tok2.is(tok::identifier);
   }
 
+  // 'subtypealias' name
+  if (Tok.isContextualKeyword("subtypealias")) {
+    return Tok2.is(tok::identifier);
+  }
+
   if (Tok.isContextualKeyword("package")) {
     // If `case` is the next token after `return package` statement,
     // E.g.
