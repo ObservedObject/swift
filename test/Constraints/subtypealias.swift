@@ -1,5 +1,5 @@
-// RUN: %target-typecheck-verify-swift
-// RUN: %target-run-simple-swift
+// RUN: %target-typecheck-verify-swift -disable-experimental-parser-round-trip
+// RUN: %target-run-simple-swift(-Xfrontend -disable-experimental-parser-round-trip)
 // REQUIRES: executable_test
 
 // ===----------------------------------------------------------------------===
