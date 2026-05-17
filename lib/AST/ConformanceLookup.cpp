@@ -584,6 +584,22 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
   if (auto packElement = type->getAs<PackElementType>())
     type = packElement->getPackType();
 
+  // A 'subtypealias' inherits protocol conformances from its underlying type.
+  if (auto *aliasType = type->getAs<TypeAliasType>();
+      aliasType && aliasType->isSubtypeAlias()) {
+    auto inheritedConformance = lookupConformance(
+        aliasType->getSinglyDesugaredType(), protocol, /*allowMissing=*/true);
+    if (!inheritedConformance)
+      return ProtocolConformanceRef::forMissingOrInvalid(type, protocol);
+
+    if (auto *concrete = inheritedConformance.getConcrete()) {
+      return ProtocolConformanceRef(
+          ctx.getInheritedConformance(type, concrete));
+    }
+
+    return ProtocolConformanceRef::forAbstract(type, protocol);
+  }
+
   // An archetype conforms to a protocol if the protocol is listed in the
   // archetype's list of conformances, or if the archetype has a superclass
   // constraint and the superclass conforms to the protocol.

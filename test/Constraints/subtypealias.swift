@@ -57,6 +57,12 @@ func assertEqual<T: Equatable>(_ a: T, _ b: T) {
 let c: Celsius = 100.0
 assertEqual(c, 100.0)               // Celsius compared as Double ✓
 
+func acceptsFloatLiteral<T: ExpressibleByFloatLiteral>(_: T.Type) {}
+acceptsFloatLiteral(Celsius.self)    // subtypealias inherits float-literal expressibility ✓
+
+let freezing = Celsius(floatLiteral: 32.0)
+assertEqual(freezing, 32.0)
+
 let sum: Double = boiling + 50.0    // arithmetic yields Double, not Celsius
 assertEqual(sum, 150.0)
 
