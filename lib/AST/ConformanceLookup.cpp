@@ -672,6 +672,8 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
       auto inheritedConformance = lookupConformance(
           aliasType->getSinglyDesugaredType(), protocol,
           /*allowMissing=*/true);
+      // Keep Sendable handling consistent with other inherited-conformance
+      // paths: unavailable Sendable conformances should not propagate as valid.
       if (protocol->isSpecificProtocol(KnownProtocolKind::Sendable) &&
           inheritedConformance.hasUnavailableConformance()) {
         inheritedConformance = ProtocolConformanceRef::forInvalid();
