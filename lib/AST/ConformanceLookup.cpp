@@ -671,7 +671,7 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
     if (aliasType->isSubtypeAlias()) {
       auto inheritedConformance = lookupConformance(
           aliasType->getSinglyDesugaredType(), protocol,
-          /*allowMissing=*/false);
+          /*allowMissing=*/true);
       if (protocol->isSpecificProtocol(KnownProtocolKind::Sendable) &&
           inheritedConformance.hasUnavailableConformance()) {
         inheritedConformance = ProtocolConformanceRef::forInvalid();

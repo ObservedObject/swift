@@ -7212,12 +7212,12 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
     // Do not short-circuit subtypealias checks here: `Double` and `Celsius`
     // have equal *desugared* types, but are not interchangeable in both
     // directions.
-    const bool shouldDeferSubtypeAliasEquality =
+    const bool requiresSubtypeAliasCheck =
         kind >= ConstraintKind::Subtype &&
         (isSubtypeAliasType(type1) || isSubtypeAliasType(type2)) &&
         !type1->isEqual(type2);
     if (desugar1->isEqual(desugar2) && !isa<InOutType>(desugar2) &&
-        !shouldDeferSubtypeAliasEquality) {
+        !requiresSubtypeAliasCheck) {
       return getTypeMatchSuccess();
     }
   }
