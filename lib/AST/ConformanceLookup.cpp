@@ -585,7 +585,7 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
     type = packElement->getPackType();
 
   // A 'subtypealias' inherits protocol conformances from its underlying type.
-  if (auto *aliasType = type->getAs<TypeAliasType>();
+  if (auto *aliasType = dyn_cast<TypeAliasType>(type.getPointer());
       aliasType && aliasType->isSubtypeAlias()) {
     auto inheritedConformance = lookupConformance(
         aliasType->getSinglyDesugaredType(), protocol, /*allowMissing=*/true);
