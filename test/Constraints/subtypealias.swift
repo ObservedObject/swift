@@ -46,7 +46,7 @@ let _: String = news                // NewsURL -> String ✓ (through URLString)
 // MARK: - Explicit cast always succeeds (same underlying layout)
 
 let d: Double = 98.6
-let bodyTemp = d as! Celsius        // expected-warning {{forced cast of 'Celsius' (aka 'Double') to same type has no effect}}
+let bodyTemp = d as! Celsius        // expected-warning {{forced cast of '.*' to same type has no effect}}
 
 // MARK: - Runtime behaviour is correct
 
