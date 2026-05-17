@@ -7194,6 +7194,12 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
   if (desugar1->hasError() || desugar2->hasError())
     return getTypeMatchFailure(locator);
 
+  auto isSubtypeAliasType = [](Type type) -> bool {
+    if (auto *aliasTy = dyn_cast<TypeAliasType>(type.getPointer()))
+      return aliasTy->isSubtypeAlias();
+    return false;
+  };
+
   // If both sides are dependent members without type variables, it's
   // possible that base type is incorrect e.g. `Foo.Element` where `Foo`
   // is a concrete type substituted for generic parameter,
@@ -7202,7 +7208,16 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
   if (!(desugar1->is<DependentMemberType>() &&
         desugar2->is<DependentMemberType>())) {
     // If the types are obviously equivalent, we're done.
-    if (desugar1->isEqual(desugar2) && !isa<InOutType>(desugar2)) {
+    //
+    // Do not short-circuit subtypealias checks here: `Double` and `Celsius`
+    // have equal *desugared* types, but are not interchangeable in both
+    // directions.
+    const bool shouldDeferSubtypeAliasEquality =
+        kind >= ConstraintKind::Subtype &&
+        (isSubtypeAliasType(type1) || isSubtypeAliasType(type2)) &&
+        !type1->isEqual(type2);
+    if (desugar1->isEqual(desugar2) && !isa<InOutType>(desugar2) &&
+        !shouldDeferSubtypeAliasEquality) {
       return getTypeMatchSuccess();
     }
   }

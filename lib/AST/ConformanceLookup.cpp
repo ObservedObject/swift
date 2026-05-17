@@ -666,6 +666,27 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
     return getBuiltinBuiltinTypeConformance(type, builtinType, protocol);
   }
 
+  // A subtypealias inherits conformances from its underlying type.
+  if (auto *aliasType = dyn_cast<TypeAliasType>(type.getPointer())) {
+    if (aliasType->isSubtypeAlias()) {
+      auto inheritedConformance = lookupConformance(
+          aliasType->getSinglyDesugaredType(), protocol,
+          /*allowMissing=*/false);
+      if (protocol->isSpecificProtocol(KnownProtocolKind::Sendable) &&
+          inheritedConformance.hasUnavailableConformance()) {
+        inheritedConformance = ProtocolConformanceRef::forInvalid();
+      }
+
+      if (inheritedConformance) {
+        if (auto concrete = inheritedConformance.getConcrete()) {
+          return ProtocolConformanceRef(
+              ctx.getInheritedConformance(type, concrete));
+        }
+        return inheritedConformance;
+      }
+    }
+  }
+
 #ifndef NDEBUG
   // Ensure we haven't missed queries for the specialty SIL types
   // in the AST in conformance to one of the invertible protocols.
