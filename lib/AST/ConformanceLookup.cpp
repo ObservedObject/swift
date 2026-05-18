@@ -773,8 +773,14 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
             auto conformance = lookupConformance(
                 underlyingAlias->getDecl()->getDeclaredInterfaceType(), protocol,
                 /*allowMissing=*/false);
-            if (conformance)
-              return conformance;
+            if (conformance) {
+              if (!conformance.isConcrete())
+                return conformance;
+
+              conformances.clear();
+              conformances.push_back(conformance.getConcrete());
+              break;
+            }
 
             currentAlias = underlyingAlias->getDecl();
             continue;
@@ -782,17 +788,37 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
 
           auto conformance = lookupConformance(underlying, protocol,
                                                /*allowMissing=*/false);
-          if (conformance)
-            return conformance;
+          if (conformance) {
+            if (!conformance.isConcrete())
+              return conformance;
+
+            conformances.clear();
+            conformances.push_back(conformance.getConcrete());
+          }
           break;
         }
       }
 
-      if (Type underlying = nominal->getSubtypedGeneric())
-        return lookupConformance(underlying, protocol, /*allowMissing=*/false);
+      if (conformances.empty()) {
+        if (Type underlying = nominal->getSubtypedGeneric()) {
+          auto conformance =
+              lookupConformance(underlying, protocol, /*allowMissing=*/false);
+          if (conformance) {
+            if (!conformance.isConcrete())
+              return conformance;
 
-      // Was unable to infer the missing conformance.
-      return ProtocolConformanceRef::forMissingOrInvalid(type, protocol);
+            conformances.clear();
+            conformances.push_back(conformance.getConcrete());
+          }
+        }
+      }
+
+      if (conformances.empty()) {
+        // Was unable to infer the missing conformance.
+        return ProtocolConformanceRef::forMissingOrInvalid(type, protocol);
+      }
+
+      assert(!conformances.empty());
     }
   }
 
