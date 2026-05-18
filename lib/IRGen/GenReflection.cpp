@@ -568,6 +568,7 @@ getTypeRefImpl(IRGenModule &IGM,
 std::pair<llvm::Constant *, unsigned>
 IRGenModule::getTypeRef(CanType type, CanGenericSignature sig,
                         MangledTypeRefRole role) {
+  type = getRuntimeReifiedType(type);
   type = substOpaqueTypesWithUnderlyingTypes(type);
   return getTypeRefImpl(*this, type, sig, role);
 }

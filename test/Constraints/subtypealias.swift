@@ -1,5 +1,4 @@
 // RUN: %target-typecheck-verify-swift -disable-experimental-parser-round-trip
-// REQUIRES: executable_test
 
 // ===----------------------------------------------------------------------===
 // Tests for 'subtypealias' — a distinct one-way subtype of an existing type.
@@ -47,7 +46,7 @@ let _: String = news                // NewsURL -> String ✓ (through URLString)
 let d: Double = 98.6
 let bodyTemp = d as! Celsius        // explicit downcast always succeeds ✓
 
-// MARK: - Runtime behaviour is correct
+// MARK: - Operations on subtypealias values type-check
 
 func assertEqual<T: Equatable>(_ a: T, _ b: T) {
     precondition(a == b, "\(a) != \(b)")

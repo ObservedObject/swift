@@ -1547,8 +1547,9 @@ RValue RValueEmitter::visitMetatypeConversionExpr(MetatypeConversionExpr *E,
     auto srcInstanceTy = metaBase->getType().getAs<AnyMetatypeType>();
     auto destInstanceTy = loweredResultTy.getAs<AnyMetatypeType>();
     if (srcInstanceTy && destInstanceTy) {
-      auto srcNom = srcInstanceTy->getInstanceType()->getAnyNominal();
-      if (srcNom && isa<SubtypeAliasDecl>(srcNom)) {
+      auto srcTy = srcInstanceTy->getInstanceType();
+      auto destTy = destInstanceTy->getInstanceType();
+      if (srcTy->isRelatedBySubtypeAliasTo(destTy)) {
         auto bitcast = SGF.B.createUncheckedTrivialBitCast(E, metaBase,
                                                            loweredResultTy);
         return RValue(SGF, E,

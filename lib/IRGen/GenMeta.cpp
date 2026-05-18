@@ -3122,6 +3122,11 @@ void IRGenModule::emitSubtypeAliasDecl(SubtypeAliasDecl *D) {
   if (!IRGen.hasLazyMetadata(D))
     emitLazyTypeContextDescriptor(*this, D, DontRequireMetadata);
 
+  if (!D->isGenericContext())
+    createDirectTypeMetadataAccessFunction(
+        *this, D->getDeclaredType()->getCanonicalType(),
+        /*allowExistingDefinition*/ true);
+
   emitNestedTypeDecls(D->getMembers());
 }
 
