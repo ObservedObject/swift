@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -emit-silgen -disable-experimental-parser-round-trip %s -o /dev/null
+// RUN: %target-swift-frontend -emit-sil -disable-experimental-parser-round-trip %s -o /dev/null
 
 subtypealias Kelvin = Double
 subtypealias Celsius = Kelvin
