@@ -757,8 +757,7 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
         return ProtocolConformanceRef::forMissingOrInvalid(type, protocol);
       }
     } else {
-      Type underlying;
-      if (nominal->getSubtypedGenericNominal(&underlying))
+      if (Type underlying = nominal->getSubtypedGeneric())
         return lookupConformance(underlying, protocol, /*allowMissing=*/false);
 
       // Was unable to infer the missing conformance.

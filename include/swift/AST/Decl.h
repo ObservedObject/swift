@@ -4555,9 +4555,8 @@ public:
   Type getDeclaredInterfaceType() const;
 
   /// If this nominal is a subtypealias whose desugared underlying type has
-  /// a generic nominal root, return that nominal and optionally write the
-  /// desugared underlying type.
-  NominalTypeDecl *getSubtypedGenericNominal(Type *underlyingType = nullptr) const;
+  /// a generic nominal root, return that desugared underlying type.
+  Type getSubtypedGeneric() const;
 
   /// Add a new extension to this nominal type.
   void addExtension(ExtensionDecl *extension);

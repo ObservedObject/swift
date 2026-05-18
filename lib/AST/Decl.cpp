@@ -6104,23 +6104,21 @@ Type NominalTypeDecl::getDeclaredInterfaceType() const {
   return DeclaredInterfaceTy;
 }
 
-NominalTypeDecl *
-NominalTypeDecl::getSubtypedGenericNominal(Type *underlyingType) const {
+Type
+NominalTypeDecl::getSubtypedGeneric() const {
   auto *sta = dyn_cast<SubtypeAliasDecl>(this);
   if (!sta)
-    return nullptr;
+    return Type();
 
   Type underlying = sta->getUnderlyingType();
   while (auto *inner = underlying->getAs<SubtypeAliasType>())
     underlying = inner->getDecl()->getUnderlyingType();
 
-  auto *underlyingNominal = underlying->getAnyNominal();
-  if (!underlyingNominal || !underlyingNominal->isGenericContext())
-    return nullptr;
+  auto *underlyingNominalDecl = underlying->getAnyNominal();
+  if (!underlyingNominalDecl || !underlyingNominalDecl->isGenericContext())
+    return Type();
 
-  if (underlyingType)
-    *underlyingType = underlying;
-  return underlyingNominal;
+  return underlying;
 }
 
 void NominalTypeDecl::prepareExtensions() {
@@ -9573,8 +9571,7 @@ Type DeclContext::getSelfInterfaceType() const {
           ->getDeclaredInterfaceType();
     }
 
-    Type underlying;
-    if (nominalDecl->getSubtypedGenericNominal(&underlying))
+    if (Type underlying = nominalDecl->getSubtypedGeneric())
       return underlying;
 
     return getDeclaredInterfaceType();
