@@ -9559,7 +9559,7 @@ Type DeclContext::getSelfInterfaceType() const {
       while (auto *inner = underlying->getAs<SubtypeAliasType>())
         underlying = inner->getDecl()->getUnderlyingType();
 
-      if (sta->getGenericParams()) {
+      if (sta->getGenericParams() || isa<ExtensionDecl>(this)) {
         if (auto *underlyingNominal = underlying->getAnyNominal();
             underlyingNominal && underlyingNominal->isGenericContext())
           return underlying;

@@ -7,7 +7,7 @@ extension SArray {
 }
 
 let a = SArray([1, 2, 3])
-_ = a
+let _: [Int] = a.array
 print("ok")
 
 // CHECK: ok

@@ -82,7 +82,7 @@ _ = takesFilePath(path + "/bin")   // expected-error {{cannot convert value of t
 subtypealias SArray = Set
 
 extension SArray {
-    var array: Array<Element> { Array(self) }
+    var array: Array { Array(self) }
 }
 
 let s = SArray([1, 2, 3])
