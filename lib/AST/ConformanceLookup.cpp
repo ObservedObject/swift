@@ -757,6 +757,37 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
         return ProtocolConformanceRef::forMissingOrInvalid(type, protocol);
       }
     } else {
+      if (auto *subtypeAlias = dyn_cast<SubtypeAliasDecl>(nominal)) {
+        DenseSet<const SubtypeAliasDecl *> visited;
+        auto *currentAlias = subtypeAlias;
+        while (visited.insert(currentAlias).second) {
+          Type underlying = currentAlias->getUnderlyingType();
+          if (!underlying || underlying->hasUnboundGenericType())
+            break;
+
+          if (auto *underlyingAlias =
+                  dyn_cast<SubtypeAliasType>(underlying.getPointer())) {
+            if (underlyingAlias->getDecl() == currentAlias)
+              break;
+
+            auto conformance = lookupConformance(
+                underlyingAlias->getDecl()->getDeclaredInterfaceType(), protocol,
+                /*allowMissing=*/false);
+            if (conformance)
+              return conformance;
+
+            currentAlias = underlyingAlias->getDecl();
+            continue;
+          }
+
+          auto conformance = lookupConformance(underlying, protocol,
+                                               /*allowMissing=*/false);
+          if (conformance)
+            return conformance;
+          break;
+        }
+      }
+
       if (Type underlying = nominal->getSubtypedGeneric())
         return lookupConformance(underlying, protocol, /*allowMissing=*/false);
 

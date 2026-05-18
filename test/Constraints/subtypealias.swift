@@ -103,4 +103,16 @@ let cFromKelvin: CelsiusFromKelvin = 100.0
 cFromKelvin.p()
 CelsiusFromKelvin.p()
 
+// MARK: - Chained subtypealias protocol conformance lookup
+
+protocol SubtypeAliasConformanceP {}
+
+subtypealias KelvinConformance = Double
+subtypealias CelsiusConformance = KelvinConformance
+
+extension KelvinConformance: SubtypeAliasConformanceP {}
+
+func takesSubtypeAliasConformanceP(_: some SubtypeAliasConformanceP) {}
+takesSubtypeAliasConformanceP(CelsiusConformance(1.0))
+
 print("All subtypealias tests passed.")
