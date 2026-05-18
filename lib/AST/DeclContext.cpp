@@ -158,21 +158,6 @@ GenericSignature DeclContext::getGenericSignatureOfContext() const {
   auto dc = this;
   do {
     if (auto decl = dc->getAsDecl()) {
-      if (auto *ext = dyn_cast<ExtensionDecl>(decl)) {
-        if (auto sig = ext->getGenericSignature())
-          return sig;
-
-        if (auto *sta = dyn_cast<SubtypeAliasDecl>(ext->getSelfNominalTypeDecl())) {
-          Type underlying = sta->getUnderlyingType();
-          while (auto *inner = underlying->getAs<SubtypeAliasType>())
-            underlying = inner->getDecl()->getUnderlyingType();
-
-          if (auto *underlyingNominal = underlying->getAnyNominal();
-              underlyingNominal && underlyingNominal->isGenericContext())
-            return underlyingNominal->getGenericSignatureOfContext();
-        }
-      }
-
       if (auto GC = decl->getAsGenericContext())
         return GC->getGenericSignature();
     }
