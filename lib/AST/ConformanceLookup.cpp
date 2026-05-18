@@ -847,13 +847,13 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
   }
 
   // We now have a root conformance for the nominal's declared interface type.
-  // If our type is specialized, apply a substitution map to the root
-  // conformance.
-  if (type->isSpecialized()) {
+  // If our type is specialized, or if the concrete conformance type does not
+  // match the queried type, apply a substitution map to rebuild it.
+  if (type->isSpecialized() || !conformance->getType()->isEqual(type)) {
     if (!conformance->getType()->isEqual(type)) {
       // We use a builtin conformance for unconditional Copyable and Escapable
       // conformances. Avoid building a substitution map and just return the
-      // correct builtin conformance for the specialized type.
+      // correct builtin conformance for the queried type.
       if (auto *builtinConf = dyn_cast<BuiltinProtocolConformance>(conformance)) {
         return ProtocolConformanceRef(
             ctx.getBuiltinConformance(type, protocol,
@@ -862,7 +862,7 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
 
       // Otherwise, we have a normal conformance, so we're going to build a
       // specialized conformance from the context substitution map of the
-      // specialized type.
+      // queried type.
       auto *normalConf = cast<NormalProtocolConformance>(conformance);
       auto *conformanceDC = normalConf->getDeclContext();
 
