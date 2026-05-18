@@ -8586,26 +8586,36 @@ ConstraintSystem::simplifyConstructionConstraint(
   auto desugarValueType = valueType->getDesugaredType();
 
   if (auto *subtypeAlias = desugarValueType->getAs<SubtypeAliasType>()) {
+    // For SubtypeAlias construction (e.g. SArray(...)), find the initializers
+    // on the underlying type but bind the result back to the SubtypeAlias type.
     auto underlyingType = subtypeAlias->getDecl()->getUnderlyingType();
-    SmallVector<AnyFunctionType::Param, 4> args;
-    for (auto arg : fnType->getParams()) {
-      auto flags = arg.getParameterFlags().withCompileTimeLiteral(false);
-      if (flags.isInOut())
-        return SolutionKind::Error;
-      args.push_back(arg.withFlags(flags));
-    }
+    // Walk chain recursively (e.g. Celsius -> Kelvin -> Measurement).
+    while (auto *inner = underlyingType->getAs<SubtypeAliasType>())
+      underlyingType = inner->getDecl()->getUnderlyingType();
 
-    Type argType = AnyFunctionType::composeTuple(
-        getASTContext(), args, ParameterFlagHandling::AssertEmpty);
+    // Create a type variable for the underlying construction result.
+    auto underlyingResultTy = createTypeVariable(
+        getConstraintLocator(locator, ConstraintLocator::ApplyFunction),
+        TVO_CanBindToNoEscape);
 
+    // Bind the underlying result to the underlying type.
+    addConstraint(ConstraintKind::Bind, underlyingResultTy, underlyingType,
+                  locator);
+
+    // Bind fnType->getResult() to the original SubtypeAlias type so the
+    // constructed value has type SArray, not Set<Int>.
     ConstraintLocatorBuilder builder(locator);
     if (matchTypes(fnType->getResult(), valueType, ConstraintKind::Bind, flags,
                    builder.withPathElement(ConstraintLocator::ApplyFunction))
             .isFailure())
       return SolutionKind::Error;
 
-    return matchTypes(argType, underlyingType, ConstraintKind::Conversion,
-                      getDefaultDecompositionOptions(flags), locator);
+    // Delegate argument matching to the underlying type's construction.
+    auto *underlyingFnType = FunctionType::get(
+        fnType->getParams(), underlyingResultTy, fnType->getExtInfo());
+    return simplifyConstructionConstraint(underlyingType, underlyingFnType,
+                                          flags, useDC, functionRefInfo,
+                                          locator);
   }
 
   switch (desugarValueType->getKind()) {
@@ -10981,11 +10991,43 @@ performMemberLookup(ConstraintKind constraintKind, DeclNameRef memberName,
     return OverloadChoice::getDecl(baseTy, cand, functionRefInfo);
   };
 
+  // If baseTy is a SubtypeAlias and the candidate was found in an underlying
+  // type (not in baseTy's own decl), use the underlying nominal as the overload
+  // base so the constraint solver can apply it correctly.
+  auto adjustBaseForSubtypeAlias = [&](Type base, ValueDecl *cand) -> Type {
+    // Unwrap metatype for static lookup (e.g. Celsius.Type -> Celsius).
+    bool isMeta = false;
+    Type baseInst = base;
+    if (auto *meta = base->getAs<AnyMetatypeType>()) {
+      baseInst = meta->getInstanceType();
+      isMeta = true;
+    }
+    if (!baseInst->getAs<SubtypeAliasType>())
+      return base;
+    auto *candDC = cand->getDeclContext();
+    // Walk the underlying chain to find which nominal the cand belongs to.
+    Type current = baseInst;
+    while (auto *sta = current->getAs<SubtypeAliasType>()) {
+      current = sta->getDecl()->getUnderlyingType();
+      if (auto *nom = current->getAnyNominal()) {
+        if (candDC->getSelfNominalTypeDecl() == nom)
+          return isMeta ? MetatypeType::get(current) : current;
+      }
+    }
+    return base;
+  };
+
   // Add all results from this lookup.
-  for (auto result : lookup)
-    addChoice(getOverloadChoice(result.getValueDecl(),
-                                /*isBridged=*/false,
-                                /*isUnwrappedOptional=*/false));
+  for (auto result : lookup) {
+    auto *cand = result.getValueDecl();
+    auto adjustedBase = adjustBaseForSubtypeAlias(baseTy, cand);
+    if (adjustedBase.getPointer() != baseTy.getPointer()) {
+      addChoice(OverloadChoice::getDecl(adjustedBase, cand, functionRefInfo));
+    } else {
+      addChoice(getOverloadChoice(cand, /*isBridged=*/false,
+                                  /*isUnwrappedOptional=*/false));
+    }
+  }
 
   // Backward compatibility hack. In Swift 4, `init` and init were
   // the same name, so you could write "foo.init" to look up a

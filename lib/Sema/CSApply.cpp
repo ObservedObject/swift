@@ -8041,6 +8041,25 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
     }
   }
 
+  // Allow SubtypeAlias coercion (e.g. Celsius -> Kelvin).
+  // Both share the same underlying representation so a bitcast suffices.
+  {
+    auto toCanonical = toType->getCanonicalType();
+    auto fromCanonical = fromType->getCanonicalType();
+    // Walk from->underlying chain looking for toType.
+    for (Type cur = fromType; auto *sta = cur->getAs<SubtypeAliasType>();) {
+      cur = sta->getDecl()->getUnderlyingType();
+      if (cur->getCanonicalType()->isEqual(toCanonical))
+        return cs.cacheType(new (ctx) UnsafeCastExpr(expr, toType));
+    }
+    // Walk to->underlying chain looking for fromType.
+    for (Type cur = toType; auto *sta = cur->getAs<SubtypeAliasType>();) {
+      cur = sta->getDecl()->getUnderlyingType();
+      if (cur->getCanonicalType()->isEqual(fromCanonical))
+        return cs.cacheType(new (ctx) UnsafeCastExpr(expr, toType));
+    }
+  }
+
   ABORT([&](auto &out) {
     out << "Unhandled coercion:\n";
     fromType->dump(out);

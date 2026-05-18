@@ -9554,6 +9554,16 @@ Type DeclContext::getSelfInterfaceType() const {
           ->getDeclaredInterfaceType();
     }
 
+    // For SubtypeAlias, use the underlying type as the self interface type
+    // so that associated types and generic parameters resolve correctly
+    // inside extensions (e.g. Element in extension SArray -> Int).
+    if (auto *sta = dyn_cast<SubtypeAliasDecl>(nominalDecl)) {
+      Type underlying = sta->getUnderlyingType();
+      while (auto *inner = underlying->getAs<SubtypeAliasType>())
+        underlying = inner->getDecl()->getUnderlyingType();
+      return underlying;
+    }
+
     return getDeclaredInterfaceType();
   }
 

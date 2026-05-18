@@ -757,6 +757,14 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
         return ProtocolConformanceRef::forMissingOrInvalid(type, protocol);
       }
     } else {
+      // For SubtypeAlias, delegate conformance lookup to the underlying type.
+      if (isa<SubtypeAliasDecl>(nominal)) {
+        auto *sta = cast<SubtypeAliasDecl>(nominal);
+        Type underlying = sta->getUnderlyingType();
+        while (auto *inner = underlying->getAs<SubtypeAliasType>())
+          underlying = inner->getDecl()->getUnderlyingType();
+        return lookupConformance(underlying, protocol, /*allowMissing=*/false);
+      }
       // Was unable to infer the missing conformance.
       return ProtocolConformanceRef::forMissingOrInvalid(type, protocol);
     }

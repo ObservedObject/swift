@@ -1064,6 +1064,27 @@ private:
         continue;
       }
 
+      // SubtypeAlias is transparent at the debug info level; use the
+      // underlying type so the mangled name can round-trip through the
+      // demangler (which doesn't know about subtypealias).
+      // Also handle metatypes wrapping a SubtypeAlias (e.g. Kelvin.Type).
+      if (auto *MetaTy = dyn_cast<AnyMetatypeType>(Ty.getPointer())) {
+        if (auto *SubtypeTy = MetaTy->getInstanceType()->getAs<SubtypeAliasType>()) {
+          Type underlying = SubtypeTy->getDecl()->getUnderlyingType();
+          while (auto *inner = underlying->getAs<SubtypeAliasType>())
+            underlying = inner->getDecl()->getUnderlyingType();
+          if (auto *thinMeta = dyn_cast<MetatypeType>(MetaTy))
+            Ty = MetatypeType::get(underlying, thinMeta->getRepresentation());
+          else
+            Ty = MetatypeType::get(underlying);
+          continue;
+        }
+      }
+      if (auto *SubtypeTy = dyn_cast<SubtypeAliasType>(Ty.getPointer())) {
+        Ty = SubtypeTy->getDecl()->getUnderlyingType();
+        continue;
+      }
+
       break;
     }
 

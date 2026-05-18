@@ -3735,6 +3735,19 @@ public:
       if (destTy->isExistentialType())
         return;
 
+      // Allow SubtypeAlias-to-underlying conversions (e.g. Celsius -> Kelvin).
+      for (Type cur = srcTy; auto *sta = cur->getAs<SubtypeAliasType>();) {
+        cur = sta->getDecl()->getUnderlyingType();
+        if (cur->getCanonicalType()->isEqual(destTy->getCanonicalType()))
+          return;
+      }
+      // Allow underlying-to-SubtypeAlias conversions (e.g. Kelvin -> Celsius).
+      for (Type cur = destTy; auto *sta = cur->getAs<SubtypeAliasType>();) {
+        cur = sta->getDecl()->getUnderlyingType();
+        if (cur->getCanonicalType()->isEqual(srcTy->getCanonicalType()))
+          return;
+      }
+
     fail:
       Out << "subtype conversion in " << what << " is invalid: ";
       srcTy.print(Out);
