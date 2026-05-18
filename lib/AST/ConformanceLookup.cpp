@@ -758,7 +758,7 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
       }
     } else {
       if (auto *subtypeAlias = dyn_cast<SubtypeAliasDecl>(nominal)) {
-        DenseSet<const SubtypeAliasDecl *> visited;
+        llvm::DenseSet<const SubtypeAliasDecl *> visited;
         auto *currentAlias = subtypeAlias;
         while (visited.insert(currentAlias).second) {
           Type underlying = currentAlias->getUnderlyingType();
