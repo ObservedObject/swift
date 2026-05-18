@@ -807,7 +807,6 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
             if (!conformance.isConcrete())
               return conformance;
 
-            conformances.clear();
             conformances.push_back(conformance.getConcrete());
           }
         }
@@ -817,8 +816,6 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
         // Was unable to infer the missing conformance.
         return ProtocolConformanceRef::forMissingOrInvalid(type, protocol);
       }
-
-      assert(!conformances.empty());
     }
   }
 
