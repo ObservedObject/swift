@@ -758,9 +758,8 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
       }
     } else {
       if (auto *sta = dyn_cast<SubtypeAliasDecl>(nominal)) {
-        Type underlying = sta->getUnderlyingType();
-        while (auto *inner = underlying->getAs<SubtypeAliasType>())
-          underlying = inner->getDecl()->getUnderlyingType();
+        auto underlying =
+            sta->getUnderlyingType()->getInnermostSubtypeAliasUnderlyingType();
 
         if (auto *underlyingNominal = underlying->getAnyNominal();
             underlyingNominal && underlyingNominal->isGenericContext()) {

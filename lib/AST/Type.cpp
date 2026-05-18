@@ -122,6 +122,18 @@ bool TypeBase::isSubtypeAliasUpcastTo(Type Other) const {
   return false;
 }
 
+bool TypeBase::isRelatedBySubtypeAliasTo(Type Other) const {
+  return isSubtypeAliasUpcastTo(Other) ||
+         Other->isSubtypeAliasUpcastTo(Type(const_cast<TypeBase *>(this)));
+}
+
+Type TypeBase::getInnermostSubtypeAliasUnderlyingType() const {
+  Type current(const_cast<TypeBase *>(this));
+  while (auto *alias = current->getAs<SubtypeAliasType>())
+    current = alias->getDecl()->getUnderlyingType();
+  return current;
+}
+
 /// hasReferenceSemantics - Does this type have reference semantics?
 bool TypeBase::hasReferenceSemantics() {
   return getCanonicalType().hasReferenceSemantics();

@@ -947,9 +947,9 @@ bool SILType::isLoweringOf(TypeExpansionContext context, SILModule &Mod,
   if (auto dynamicSelf = dyn_cast<DynamicSelfType>(formalType))
     formalType = dynamicSelf.getSelfType();
 
-  // SubtypeAlias types lower to their underlying type (recursively).
-  while (auto subtypeAlias = dyn_cast<SubtypeAliasType>(formalType))
-    formalType = subtypeAlias->getDecl()->getUnderlyingType()->getCanonicalType();
+  // SubtypeAlias types lower to their underlying type.
+  formalType =
+      formalType->getInnermostSubtypeAliasUnderlyingType()->getCanonicalType();
 
   // Other types are preserved through lowering.
   return loweredType.getASTType() == formalType;

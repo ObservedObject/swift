@@ -582,9 +582,8 @@ LookupTypeResult TypeChecker::lookupMemberType(DeclContext *dc,
       // For SubtypeAlias, substitute using the underlying type to get
       // concrete associated type witnesses (e.g. SArray.Element = Int).
       if (memberType->hasTypeParameter()) {
-        Type baseForSubst = type;
-        while (auto *sta = baseForSubst->getAs<SubtypeAliasType>())
-          baseForSubst = sta->getDecl()->getUnderlyingType();
+        auto baseForSubst =
+            type->getInnermostSubtypeAliasUnderlyingType();
         if (!baseForSubst->isEqual(type))
           memberType = substMemberTypeWithBase(typeDecl, baseForSubst);
       }

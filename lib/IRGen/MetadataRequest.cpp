@@ -1999,10 +1999,8 @@ namespace {
     MetadataResponse visitSubtypeAliasType(CanSubtypeAliasType type,
                                            DynamicMetadataRequest request) {
       // SubtypeAlias is backed by its underlying type; use that type's metadata.
-      // Walk recursively in case of chained subtypealiases (e.g. Celsius -> Kelvin -> Double).
-      CanType underlyingType = type->getDecl()->getUnderlyingType()->getCanonicalType();
-      while (auto subtypeAlias = dyn_cast<SubtypeAliasType>(underlyingType))
-        underlyingType = subtypeAlias->getDecl()->getUnderlyingType()->getCanonicalType();
+      auto underlyingType =
+          type->getInnermostSubtypeAliasUnderlyingType()->getCanonicalType();
       return IGF.emitTypeMetadataRef(underlyingType, request);
     }
 

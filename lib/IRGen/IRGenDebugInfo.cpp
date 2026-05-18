@@ -1070,9 +1070,8 @@ private:
       // Also handle metatypes wrapping a SubtypeAlias (e.g. Kelvin.Type).
       if (auto *MetaTy = dyn_cast<AnyMetatypeType>(Ty.getPointer())) {
         if (auto *SubtypeTy = MetaTy->getInstanceType()->getAs<SubtypeAliasType>()) {
-          Type underlying = SubtypeTy->getDecl()->getUnderlyingType();
-          while (auto *inner = underlying->getAs<SubtypeAliasType>())
-            underlying = inner->getDecl()->getUnderlyingType();
+          auto underlying =
+              SubtypeTy->getInnermostSubtypeAliasUnderlyingType();
           if (auto *thinMeta = dyn_cast<MetatypeType>(MetaTy))
             Ty = MetatypeType::get(underlying, thinMeta->getRepresentation());
           else
@@ -1081,7 +1080,7 @@ private:
         }
       }
       if (auto *SubtypeTy = dyn_cast<SubtypeAliasType>(Ty.getPointer())) {
-        Ty = SubtypeTy->getDecl()->getUnderlyingType();
+        Ty = SubtypeTy->getInnermostSubtypeAliasUnderlyingType();
         continue;
       }
 
@@ -2091,7 +2090,8 @@ private:
     case TypeKind::SubtypeAlias: {
       auto *SubtypeTy = BaseTy->castTo<SubtypeAliasType>();
       auto UnderlyingTy = getOrCreateType(
-          SubtypeTy->getDecl()->getUnderlyingType()->getCanonicalType());
+          SubtypeTy->getInnermostSubtypeAliasUnderlyingType()
+              ->getCanonicalType());
       return DBuilder.createTypedef(UnderlyingTy, MangledName, File, 0, File);
     }
 

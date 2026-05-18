@@ -6863,9 +6863,8 @@ Type TypeChecker::substMemberTypeWithBase(TypeDecl *member,
     // has no generic params), try the underlying type to resolve associated
     // types like Element (e.g. SArray.Element = Set<Int>.Element = Int).
     if (subs.empty()) {
-      Type underlyingBase = baseTy;
-      while (auto *sta = underlyingBase->getAs<SubtypeAliasType>())
-        underlyingBase = sta->getDecl()->getUnderlyingType();
+      auto underlyingBase =
+          baseTy->getInnermostSubtypeAliasUnderlyingType();
       if (!underlyingBase->isEqual(baseTy))
         subs = underlyingBase->getMemberSubstitutionMap(member);
     }

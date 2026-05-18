@@ -8042,8 +8042,7 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
   }
 
   // Subtypealiases share representation with their underlying chain.
-  if (fromType->isSubtypeAliasUpcastTo(toType) ||
-      toType->isSubtypeAliasUpcastTo(fromType))
+  if (fromType->isRelatedBySubtypeAliasTo(toType))
     return cs.cacheType(new (ctx) UnsafeCastExpr(expr, toType));
 
   ABORT([&](auto &out) {

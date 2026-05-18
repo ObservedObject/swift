@@ -14658,8 +14658,7 @@ ConstraintSystem::simplifyRestrictedConstraintImpl(
 
   case ConversionRestrictionKind::SubtypeAlias:
     addContextualScore();
-    return (type1->isSubtypeAliasUpcastTo(type2) ||
-            type2->isSubtypeAliasUpcastTo(type1))
+    return type1->isRelatedBySubtypeAliasTo(type2)
                ? getTypeMatchSuccess()
                : getTypeMatchFailure(locator);
 

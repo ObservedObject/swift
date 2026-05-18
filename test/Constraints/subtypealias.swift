@@ -39,7 +39,7 @@ let _: String = news                // NewsURL -> String ✓ (through URLString)
 
 // MARK: - Two distinct subtypes of the same underlying are incompatible
 
- let _: Celsius = Fahrenheit(212.0)   // expected-error {{cannot convert value of type 'Fahrenheit' to specified type 'Celsius'}}
+ let _: Celsius = Fahrenheit(212.0)   // expected-error {{cannot convert value of type 'Double' to specified type 'Celsius'}}
  let _ = takesDouble(boiling)         // ✓ fine — both go through Double
 
 // MARK: - Explicit cast always succeeds (same underlying layout)

@@ -2356,8 +2356,9 @@ const TypeInfo *TypeConverter::convertType(CanType ty) {
   case TypeKind::Struct:
   case TypeKind::SubtypeAlias:
     if (auto *subtypeAlias = dyn_cast<SubtypeAliasType>(ty.getPointer()))
-      return convertType(subtypeAlias->getDecl()->getUnderlyingType()
-                             ->getCanonicalType());
+      return convertType(
+          subtypeAlias->getInnermostSubtypeAliasUnderlyingType()
+              ->getCanonicalType());
     return convertAnyNominalType(ty, cast<NominalType>(ty)->getDecl());
   case TypeKind::BoundGenericClass:
   case TypeKind::BoundGenericEnum:
@@ -2677,7 +2678,7 @@ const TypeInfo *TypeConverter::convertAnyNominalType(CanType type,
     case DeclKind::Struct:
       return convertStructType(type.getPointer(), type, cast<StructDecl>(decl));
     case DeclKind::SubtypeAlias:
-      return convertType(cast<SubtypeAliasDecl>(decl)->getUnderlyingType()
+      return convertType(type->getInnermostSubtypeAliasUnderlyingType()
                              ->getCanonicalType());
 
     case DeclKind::BuiltinTuple:
@@ -2732,7 +2733,8 @@ const TypeInfo *TypeConverter::convertAnyNominalType(CanType type,
     return result;
   }
   case DeclKind::SubtypeAlias:
-    return convertType(cast<SubtypeAliasDecl>(decl)->getUnderlyingType()
+    return convertType(decl->getDeclaredTypeInContext()
+                           ->getInnermostSubtypeAliasUnderlyingType()
                            ->getCanonicalType());
   }
   llvm_unreachable("bad declaration kind");

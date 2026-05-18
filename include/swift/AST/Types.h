@@ -640,6 +640,14 @@ public:
   /// Returns true if this type is a subtypealias whose underlying-type chain
   /// contains \p Other.
   bool isSubtypeAliasUpcastTo(Type Other) const;
+
+  /// Returns true if either type is a subtypealias whose underlying-type chain
+  /// contains the other type.
+  bool isRelatedBySubtypeAliasTo(Type Other) const;
+
+  /// If this type is a subtypealias, recursively unwrap its underlying type.
+  /// Otherwise, return this type.
+  Type getInnermostSubtypeAliasUnderlyingType() const;
   
   /// getDesugaredType - If this type is a sugared type, remove all levels of
   /// sugar until we get down to a non-sugar type.
