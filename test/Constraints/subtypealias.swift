@@ -77,4 +77,15 @@ func takesFilePath(_ s: FilePath) -> String { s }
 _ = takesCelsius(boiling + 1.0)    // expected-error {{cannot convert value of type 'Double' to expected argument type 'Celsius'}}
 _ = takesFilePath(path + "/bin")   // expected-error {{cannot convert value of type 'String' to expected argument type 'FilePath'}}
 
+// MARK: - Generic subtypealias extension
+
+subtypealias SArray = Set
+
+extension SArray {
+    var array: Array<Element> { Array(self) }
+}
+
+let s = SArray([1, 2, 3])
+let _: [Int] = s.array
+
 print("All subtypealias tests passed.")
