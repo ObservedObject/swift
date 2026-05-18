@@ -757,16 +757,9 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
         return ProtocolConformanceRef::forMissingOrInvalid(type, protocol);
       }
     } else {
-      if (auto *sta = dyn_cast<SubtypeAliasDecl>(nominal)) {
-        Type underlying = sta->getUnderlyingType();
-        while (auto *inner = underlying->getAs<SubtypeAliasType>())
-          underlying = inner->getDecl()->getUnderlyingType();
-
-        if (auto *underlyingNominal = underlying->getAnyNominal();
-            underlyingNominal && underlyingNominal->isGenericContext()) {
-          return lookupConformance(underlying, protocol, /*allowMissing=*/false);
-        }
-      }
+      Type underlying;
+      if (nominal->getSubtypedGenericNominal(&underlying))
+        return lookupConformance(underlying, protocol, /*allowMissing=*/false);
 
       // Was unable to infer the missing conformance.
       return ProtocolConformanceRef::forMissingOrInvalid(type, protocol);

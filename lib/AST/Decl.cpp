@@ -6104,6 +6104,25 @@ Type NominalTypeDecl::getDeclaredInterfaceType() const {
   return DeclaredInterfaceTy;
 }
 
+NominalTypeDecl *
+NominalTypeDecl::getSubtypedGenericNominal(Type *underlyingType) const {
+  auto *sta = dyn_cast<SubtypeAliasDecl>(this);
+  if (!sta)
+    return nullptr;
+
+  Type underlying = sta->getUnderlyingType();
+  while (auto *inner = underlying->getAs<SubtypeAliasType>())
+    underlying = inner->getDecl()->getUnderlyingType();
+
+  auto *underlyingNominal = underlying->getAnyNominal();
+  if (!underlyingNominal || !underlyingNominal->isGenericContext())
+    return nullptr;
+
+  if (underlyingType)
+    *underlyingType = underlying;
+  return underlyingNominal;
+}
+
 void NominalTypeDecl::prepareExtensions() {
   // Types in local contexts can't have extensions
   if (getLocalContext() != nullptr) {
@@ -9554,15 +9573,9 @@ Type DeclContext::getSelfInterfaceType() const {
           ->getDeclaredInterfaceType();
     }
 
-    if (auto *sta = dyn_cast<SubtypeAliasDecl>(nominalDecl)) {
-      Type underlying = sta->getUnderlyingType();
-      while (auto *inner = underlying->getAs<SubtypeAliasType>())
-        underlying = inner->getDecl()->getUnderlyingType();
-
-      if (auto *underlyingNominal = underlying->getAnyNominal();
-          underlyingNominal && underlyingNominal->isGenericContext())
-        return underlying;
-    }
+    Type underlying;
+    if (nominalDecl->getSubtypedGenericNominal(&underlying))
+      return underlying;
 
     return getDeclaredInterfaceType();
   }
