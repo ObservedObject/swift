@@ -87,5 +87,20 @@ extension SArray {
 
 let s = SArray([1, 2, 3])
 let _: [Int] = s.array
+print(s.array)
+
+// MARK: - Generic subtypealias extension + chained subtypealias members
+
+subtypealias Kelvin = Double
+subtypealias CelsiusFromKelvin = Kelvin
+
+extension Kelvin {
+    static func p() {}
+    func p() {}
+}
+
+let cFromKelvin: CelsiusFromKelvin = 100.0
+cFromKelvin.p()
+CelsiusFromKelvin.p()
 
 print("All subtypealias tests passed.")

@@ -761,7 +761,11 @@ LookupConformanceRequest::evaluate(Evaluator &evaluator,
         Type underlying = sta->getUnderlyingType();
         while (auto *inner = underlying->getAs<SubtypeAliasType>())
           underlying = inner->getDecl()->getUnderlyingType();
-        return lookupConformance(underlying, protocol, /*allowMissing=*/false);
+
+        if (auto *underlyingNominal = underlying->getAnyNominal();
+            underlyingNominal && underlyingNominal->isGenericContext()) {
+          return lookupConformance(underlying, protocol, /*allowMissing=*/false);
+        }
       }
 
       // Was unable to infer the missing conformance.

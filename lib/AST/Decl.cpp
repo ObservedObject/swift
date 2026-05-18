@@ -9558,7 +9558,10 @@ Type DeclContext::getSelfInterfaceType() const {
       Type underlying = sta->getUnderlyingType();
       while (auto *inner = underlying->getAs<SubtypeAliasType>())
         underlying = inner->getDecl()->getUnderlyingType();
-      return underlying;
+
+      if (auto *underlyingNominal = underlying->getAnyNominal();
+          underlyingNominal && underlyingNominal->isGenericContext())
+        return underlying;
     }
 
     return getDeclaredInterfaceType();
