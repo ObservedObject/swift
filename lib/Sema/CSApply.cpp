@@ -8041,24 +8041,10 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
     }
   }
 
-  // Allow SubtypeAlias coercion (e.g. Celsius -> Kelvin).
-  // Both share the same underlying representation so a bitcast suffices.
-  {
-    auto toCanonical = toType->getCanonicalType();
-    auto fromCanonical = fromType->getCanonicalType();
-    // Walk from->underlying chain looking for toType.
-    for (Type cur = fromType; auto *sta = cur->getAs<SubtypeAliasType>();) {
-      cur = sta->getDecl()->getUnderlyingType();
-      if (cur->getCanonicalType()->isEqual(toCanonical))
-        return cs.cacheType(new (ctx) UnsafeCastExpr(expr, toType));
-    }
-    // Walk to->underlying chain looking for fromType.
-    for (Type cur = toType; auto *sta = cur->getAs<SubtypeAliasType>();) {
-      cur = sta->getDecl()->getUnderlyingType();
-      if (cur->getCanonicalType()->isEqual(fromCanonical))
-        return cs.cacheType(new (ctx) UnsafeCastExpr(expr, toType));
-    }
-  }
+  // Subtypealiases share representation with their underlying chain.
+  if (fromType->isSubtypeAliasUpcastTo(toType) ||
+      toType->isSubtypeAliasUpcastTo(fromType))
+    return cs.cacheType(new (ctx) UnsafeCastExpr(expr, toType));
 
   ABORT([&](auto &out) {
     out << "Unhandled coercion:\n";
@@ -8595,6 +8581,22 @@ Expr *ExprRewriter::finishApply(ApplyExpr *apply, Type openedType,
 
     // Try closing existentials, if there are any.
     closeExistentials(result, locator);
+
+    if (auto *ctorRef = dyn_cast<ConstructorRefCallExpr>(apply->getFn())) {
+      auto *base = ctorRef->getBase()->getSemanticsProvidingExpr();
+      if (auto *metatypeConversion = dyn_cast<MetatypeConversionExpr>(base))
+        base = metatypeConversion->getSubExpr()->getSemanticsProvidingExpr();
+
+      if (auto *baseMeta = cs.getType(base)->getAs<AnyMetatypeType>()) {
+        auto constructedType = baseMeta->getInstanceType();
+        if (constructedType->getAs<SubtypeAliasType>() &&
+            !cs.getType(result)->isEqual(constructedType)) {
+          result = coerceToType(
+              result, constructedType,
+              locator.withPathElement(ConstraintLocator::ConstructorMember));
+        }
+      }
+    }
 
     // We may also need to force the result for an IUO. We don't apply this on
     // SelfApplyExprs, as the force unwraps should be inserted at the result of
@@ -9302,6 +9304,14 @@ applySolutionToInitialization(SyntacticElementTarget target, Expr *initializer,
     initType = ty->getRValueType()->reconstituteSugar(/*recursive =*/false);
   }
 
+  if (auto *pattern = target.getInitializationPattern()) {
+    auto initializerType = solution.getType(initializer)->getRValueType();
+    if (initializerType->getAs<SubtypeAliasType>() &&
+        !isa<TypedPattern>(pattern)) {
+      initType = initializerType;
+    }
+  }
+
   // Convert the initializer to the type of the pattern.
   auto &cs = solution.getConstraintSystem();
   auto &ctx = cs.getASTContext();
@@ -9314,6 +9324,11 @@ applySolutionToInitialization(SyntacticElementTarget target, Expr *initializer,
 
   SyntacticElementTarget resultTarget = target;
   resultTarget.setExpr(initializer);
+  if (auto *pattern = resultTarget.getInitializationPattern()) {
+    if (initType->getAs<SubtypeAliasType>() && !isa<TypedPattern>(pattern))
+      resultTarget.setPattern(TypedPattern::createImplicit(ctx, pattern,
+                                                           initType));
+  }
 
   // Record the property wrapper type and note that the initializer has
   // been subsumed by the backing property.

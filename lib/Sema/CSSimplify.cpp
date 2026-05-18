@@ -52,36 +52,6 @@
 using namespace swift;
 using namespace constraints;
 
-static bool isSubtypeAliasUpcast(Type fromType, Type toType) {
-  auto toCanonical = toType->getCanonicalType();
-  for (auto current = fromType; current;) {
-    auto *alias = current->getAs<SubtypeAliasType>();
-    if (!alias)
-      return false;
-
-    current = alias->getDecl()->getUnderlyingType();
-    if (current->getCanonicalType()->isEqual(toCanonical))
-      return true;
-  }
-
-  return false;
-}
-
-static bool isSubtypeAliasLiteralFormation(Type fromType, Type toType) {
-  auto fromCanonical = fromType->getCanonicalType();
-  for (auto current = toType; current;) {
-    auto *alias = current->getAs<SubtypeAliasType>();
-    if (!alias)
-      return false;
-
-    current = alias->getDecl()->getUnderlyingType();
-    if (current->getCanonicalType()->isEqual(fromCanonical))
-      return true;
-  }
-
-  return false;
-}
-
 MatchCallArgumentListener::~MatchCallArgumentListener() { }
 
 bool MatchCallArgumentListener::extraArgument(unsigned argIdx) { return true; }
@@ -8061,16 +8031,17 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
 
   if (kind >= ConstraintKind::Subtype) {
     // Subtypealias-to-underlying conversion (Celsius -> Double).
-    if (isSubtypeAliasUpcast(type1, type2)) {
+    if (type1->isSubtypeAliasUpcastTo(type2)) {
       conversionsOrFixes.push_back(ConversionRestrictionKind::SubtypeAlias);
     }
 
     // Underlying-to-subtypealias conversion (Double -> Celsius):
     // only allowed in an explicit 'as' coercion, not implicitly.
-    if (isSubtypeAliasLiteralFormation(type1, type2)) {
+    if (type2->isSubtypeAliasUpcastTo(type1)) {
       auto *loc = getConstraintLocator(locator);
       if (isa_and_nonnull<LiteralExpr>(locator.trySimplifyToExpr()) ||
-          loc->isForCoercion())
+          loc->isForCoercion() ||
+          loc->isLastElement<LocatorPathElt::ConstructorMember>())
         conversionsOrFixes.push_back(ConversionRestrictionKind::SubtypeAlias);
     }
     // Subclass-to-superclass conversion.
@@ -8584,16 +8555,6 @@ ConstraintSystem::simplifyConstructionConstraint(
 
   // Desugar the value type.
   auto desugarValueType = valueType->getDesugaredType();
-
-  if (auto *subtypeAlias = desugarValueType->getAs<SubtypeAliasType>()) {
-    // For SubtypeAlias construction (e.g. SArray(...)), the normal construction
-    // path via addValueMemberConstraint will look up 'init' on SArray.Type.
-    // Our adjustBaseForSubtypeAlias in performMemberLookup delegates that to
-    // Set<Int>.Type, finding the right initializers while keeping the result
-    // type as SArray. Just fall through to the normal construction path.
-    (void)subtypeAlias;
-    // Fall through.
-  }
 
   switch (desugarValueType->getKind()) {
 #define SUGARED_TYPE(id, parent) case TypeKind::id:
@@ -14697,8 +14658,8 @@ ConstraintSystem::simplifyRestrictedConstraintImpl(
 
   case ConversionRestrictionKind::SubtypeAlias:
     addContextualScore();
-    return (isSubtypeAliasUpcast(type1, type2) ||
-            isSubtypeAliasLiteralFormation(type1, type2))
+    return (type1->isSubtypeAliasUpcastTo(type2) ||
+            type2->isSubtypeAliasUpcastTo(type1))
                ? getTypeMatchSuccess()
                : getTypeMatchFailure(locator);
 

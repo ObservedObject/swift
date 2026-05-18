@@ -1981,6 +1981,40 @@ namespace {
       // Structs don't have vtables.
     }
   };
+
+  class SubtypeAliasContextDescriptorBuilder
+      : public TypeContextDescriptorBuilderBase<
+            SubtypeAliasContextDescriptorBuilder, SubtypeAliasDecl> {
+    using super = TypeContextDescriptorBuilderBase;
+
+  public:
+    SubtypeAliasContextDescriptorBuilder(IRGenModule &IGM,
+                                         SubtypeAliasDecl *Type)
+        : super(IGM, Type, DontRequireMetadata) {}
+
+    ContextDescriptorKind getContextKind() {
+      // The runtime has no subtypealias descriptor kind. Model it as a
+      // fieldless value type descriptor so protocol conformances have a stable
+      // nominal identity without requesting distinct storage or metadata.
+      return ContextDescriptorKind::Struct;
+    }
+
+    void addLayoutInfo() {
+      B.addInt32(0);
+      B.addInt32(0);
+    }
+
+    uint16_t getKindSpecificFlags() {
+      TypeContextDescriptorFlags flags;
+      setCommonFlags(flags);
+      return flags.getOpaqueValue();
+    }
+
+    void maybeAddResilientSuperclass() {}
+    void maybeAddMetadataInitialization() {}
+    void addReflectionFieldDescriptor() { B.addInt32(0); }
+    void addVTableTypeMetadata(llvm::GlobalVariable *var) {}
+  };
   
   class EnumContextDescriptorBuilder
     : public TypeContextDescriptorBuilderBase<EnumContextDescriptorBuilder,
@@ -3071,6 +3105,8 @@ void irgen::emitLazyTypeContextDescriptor(IRGenModule &IGM,
   if (auto sd = dyn_cast<StructDecl>(type)) {
     StructContextDescriptorBuilder(IGM, sd, requireMetadata,
                                    hasLayoutString).emit();
+  } else if (auto sad = dyn_cast<SubtypeAliasDecl>(type)) {
+    SubtypeAliasContextDescriptorBuilder(IGM, sad).emit();
   } else if (auto ed = dyn_cast<EnumDecl>(type)) {
     EnumContextDescriptorBuilder(IGM, ed, requireMetadata,
                                  hasLayoutString)
@@ -3080,6 +3116,13 @@ void irgen::emitLazyTypeContextDescriptor(IRGenModule &IGM,
   } else {
     llvm_unreachable("type does not have a context descriptor");
   }
+}
+
+void IRGenModule::emitSubtypeAliasDecl(SubtypeAliasDecl *D) {
+  if (!IRGen.hasLazyMetadata(D))
+    emitLazyTypeContextDescriptor(*this, D, DontRequireMetadata);
+
+  emitNestedTypeDecls(D->getMembers());
 }
 
 void irgen::emitLazyTypeMetadata(IRGenModule &IGM, NominalTypeDecl *type) {

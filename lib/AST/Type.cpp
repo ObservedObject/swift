@@ -107,6 +107,21 @@ bool TypeBase::isEqual(Type Other) const {
   return getCanonicalType() == Other.getPointer()->getCanonicalType();
 }
 
+bool TypeBase::isSubtypeAliasUpcastTo(Type Other) const {
+  auto otherCanonical = Other->getCanonicalType();
+  for (Type current(const_cast<TypeBase *>(this)); current;) {
+    auto *alias = current->getAs<SubtypeAliasType>();
+    if (!alias)
+      return false;
+
+    current = alias->getDecl()->getUnderlyingType();
+    if (current->getCanonicalType()->isEqual(otherCanonical))
+      return true;
+  }
+
+  return false;
+}
+
 /// hasReferenceSemantics - Does this type have reference semantics?
 bool TypeBase::hasReferenceSemantics() {
   return getCanonicalType().hasReferenceSemantics();

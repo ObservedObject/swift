@@ -79,7 +79,7 @@ _ = takesFilePath(path + "/bin")   // expected-error {{cannot convert value of t
 
 // MARK: - Generic subtypealias extension
 
-subtypealias SArray = Set
+subtypealias SArray = Set<Int>
 
 extension SArray {
     var array: Array<Element> { Array(self) }

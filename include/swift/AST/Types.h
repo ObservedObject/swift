@@ -636,6 +636,10 @@ public:
   /// To compare sugar, check for pointer equality of the underlying TypeBase *
   /// values, obtained by calling getPointer().
   bool isEqual(Type Other) const;
+
+  /// Returns true if this type is a subtypealias whose underlying-type chain
+  /// contains \p Other.
+  bool isSubtypeAliasUpcastTo(Type Other) const;
   
   /// getDesugaredType - If this type is a sugared type, remove all levels of
   /// sugar until we get down to a non-sugar type.
