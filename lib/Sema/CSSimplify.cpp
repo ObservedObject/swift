@@ -8586,36 +8586,13 @@ ConstraintSystem::simplifyConstructionConstraint(
   auto desugarValueType = valueType->getDesugaredType();
 
   if (auto *subtypeAlias = desugarValueType->getAs<SubtypeAliasType>()) {
-    // For SubtypeAlias construction (e.g. SArray(...)), find the initializers
-    // on the underlying type but bind the result back to the SubtypeAlias type.
-    auto underlyingType = subtypeAlias->getDecl()->getUnderlyingType();
-    // Walk chain recursively (e.g. Celsius -> Kelvin -> Measurement).
-    while (auto *inner = underlyingType->getAs<SubtypeAliasType>())
-      underlyingType = inner->getDecl()->getUnderlyingType();
-
-    // Create a type variable for the underlying construction result.
-    auto underlyingResultTy = createTypeVariable(
-        getConstraintLocator(locator, ConstraintLocator::ApplyFunction),
-        TVO_CanBindToNoEscape);
-
-    // Bind the underlying result to the underlying type.
-    addConstraint(ConstraintKind::Bind, underlyingResultTy, underlyingType,
-                  locator);
-
-    // Bind fnType->getResult() to the original SubtypeAlias type so the
-    // constructed value has type SArray, not Set<Int>.
-    ConstraintLocatorBuilder builder(locator);
-    if (matchTypes(fnType->getResult(), valueType, ConstraintKind::Bind, flags,
-                   builder.withPathElement(ConstraintLocator::ApplyFunction))
-            .isFailure())
-      return SolutionKind::Error;
-
-    // Delegate argument matching to the underlying type's construction.
-    auto *underlyingFnType = FunctionType::get(
-        fnType->getParams(), underlyingResultTy, fnType->getExtInfo());
-    return simplifyConstructionConstraint(underlyingType, underlyingFnType,
-                                          flags, useDC, functionRefInfo,
-                                          locator);
+    // For SubtypeAlias construction (e.g. SArray(...)), the normal construction
+    // path via addValueMemberConstraint will look up 'init' on SArray.Type.
+    // Our adjustBaseForSubtypeAlias in performMemberLookup delegates that to
+    // Set<Int>.Type, finding the right initializers while keeping the result
+    // type as SArray. Just fall through to the normal construction path.
+    (void)subtypeAlias;
+    // Fall through.
   }
 
   switch (desugarValueType->getKind()) {

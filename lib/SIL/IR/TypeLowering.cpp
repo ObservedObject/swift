@@ -3770,8 +3770,12 @@ TypeConverter::computeLoweredRValueType(TypeExpansionContext forExpansion,
 
     CanType visitSubtypeAliasType(CanSubtypeAliasType subtypeAlias) {
       auto underlying = subtypeAlias->getDecl()->getUnderlyingType();
-      return TC.computeLoweredRValueType(forExpansion, origType,
-                                         underlying->getCanonicalType());
+      auto underlyingCanon = underlying->getCanonicalType();
+      // Use an opaque abstraction pattern for the underlying type to avoid
+      // propagating a SubtypeAlias origType that may lack a generic signature.
+      return TC.computeLoweredRValueType(forExpansion,
+                                         AbstractionPattern::getOpaque(),
+                                         underlyingCanon);
     }
 
     // Static metatypes are unitary and can optimized to a "thin" empty
