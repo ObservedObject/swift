@@ -3735,6 +3735,9 @@ public:
       if (destTy->isExistentialType())
         return;
 
+      if (srcTy->isRelatedBySubtypeAliasTo(destTy))
+        return;
+
     fail:
       Out << "subtype conversion in " << what << " is invalid: ";
       srcTy.print(Out);
@@ -4022,4 +4025,3 @@ void swift::verify(Decl *D) {
   Verifier V = Verifier::forDecl(D);
   D->walk(V);
 }
-

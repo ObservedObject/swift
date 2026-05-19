@@ -484,6 +484,10 @@ CanType IRGenModule::getRuntimeReifiedType(CanType type) {
   // Leave type-erased ObjC generics with their generic arguments unbound, since
   // the arguments do not exist at runtime.
   return CanType(type.transformRec([&](TypeBase *t) -> std::optional<Type> {
+    if (auto *subtypeAlias = dyn_cast<SubtypeAliasType>(t)) {
+      return subtypeAlias->getInnermostSubtypeAliasUnderlyingType()
+          ->getCanonicalType();
+    }
     if (CanType(t).isTypeErasedGenericClassType()) {
       return t->getAnyNominal()->getDeclaredType()->getCanonicalType();
     }
@@ -1996,6 +2000,14 @@ namespace {
       return setLocal(type, response);
     }
     
+    MetadataResponse visitSubtypeAliasType(CanSubtypeAliasType type,
+                                           DynamicMetadataRequest request) {
+      // SubtypeAlias is backed by its underlying type; use that type's metadata.
+      auto underlyingType =
+          type->getInnermostSubtypeAliasUnderlyingType()->getCanonicalType();
+      return IGF.emitTypeMetadataRef(underlyingType, request);
+    }
+
     MetadataResponse visitNominalType(CanNominalType type,
                                       DynamicMetadataRequest request) {
       assert(!type->isExistentialType());
@@ -2835,6 +2847,12 @@ emitDirectTypeMetadataAccessFunctionBody(IRGenFunction &IGF,
   auto typeDecl = type->getAnyNominal();
   if (!typeDecl)
     return emitDirectTypeMetadataRef(IGF, type, request);
+
+  if (isa<SubtypeAliasDecl>(typeDecl)) {
+    auto underlyingType =
+        type->getInnermostSubtypeAliasUnderlyingType()->getCanonicalType();
+    return IGF.emitTypeMetadataRef(underlyingType, request);
+  }
 
   if (typeDecl->isGenericContext() &&
       !(isa<ClassDecl>(typeDecl) &&

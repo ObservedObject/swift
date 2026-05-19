@@ -1064,6 +1064,26 @@ private:
         continue;
       }
 
+      // SubtypeAlias is transparent at the debug info level; use the
+      // underlying type so the mangled name can round-trip through the
+      // demangler (which doesn't know about subtypealias).
+      // Also handle metatypes wrapping a SubtypeAlias (e.g. Kelvin.Type).
+      if (auto *MetaTy = dyn_cast<AnyMetatypeType>(Ty.getPointer())) {
+        if (auto *SubtypeTy = MetaTy->getInstanceType()->getAs<SubtypeAliasType>()) {
+          auto underlying =
+              SubtypeTy->getInnermostSubtypeAliasUnderlyingType();
+          if (auto *thinMeta = dyn_cast<MetatypeType>(MetaTy))
+            Ty = MetatypeType::get(underlying, thinMeta->getRepresentation());
+          else
+            Ty = MetatypeType::get(underlying);
+          continue;
+        }
+      }
+      if (auto *SubtypeTy = dyn_cast<SubtypeAliasType>(Ty.getPointer())) {
+        Ty = SubtypeTy->getInnermostSubtypeAliasUnderlyingType();
+        continue;
+      }
+
       break;
     }
 
@@ -2065,6 +2085,14 @@ private:
       auto SelfTy =
           getOrCreateDesugaredType(DynamicSelfTy->getSelfType(), DbgTy);
       return DBuilder.createTypedef(SelfTy, MangledName, File, 0, File);
+    }
+
+    case TypeKind::SubtypeAlias: {
+      auto *SubtypeTy = BaseTy->castTo<SubtypeAliasType>();
+      auto UnderlyingTy = getOrCreateType(
+          SubtypeTy->getInnermostSubtypeAliasUnderlyingType()
+              ->getCanonicalType());
+      return DBuilder.createTypedef(UnderlyingTy, MangledName, File, 0, File);
     }
 
     // Even builtin swift types usually come boxed in a struct.

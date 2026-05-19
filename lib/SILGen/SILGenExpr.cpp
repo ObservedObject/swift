@@ -1541,6 +1541,23 @@ RValue RValueEmitter::visitMetatypeConversionExpr(MetatypeConversionExpr *E,
     return RValue(SGF, E,
                   ManagedValue::forObjectRValueWithoutOwnership(metaBase));
 
+  // SubtypeAlias metatype conversions (e.g. Celsius.Type -> Kelvin.Type)
+  // share the same representation; use unchecked_trivial_bit_cast.
+  {
+    auto srcInstanceTy = metaBase->getType().getAs<AnyMetatypeType>();
+    auto destInstanceTy = loweredResultTy.getAs<AnyMetatypeType>();
+    if (srcInstanceTy && destInstanceTy) {
+      auto srcTy = srcInstanceTy->getInstanceType();
+      auto destTy = destInstanceTy->getInstanceType();
+      if (srcTy->isRelatedBySubtypeAliasTo(destTy)) {
+        auto bitcast = SGF.B.createUncheckedTrivialBitCast(E, metaBase,
+                                                           loweredResultTy);
+        return RValue(SGF, E,
+                      ManagedValue::forObjectRValueWithoutOwnership(bitcast));
+      }
+    }
+  }
+
   auto upcast = SGF.B.createUpcast(E, metaBase, loweredResultTy);
   return RValue(SGF, E, ManagedValue::forObjectRValueWithoutOwnership(upcast));
 }
@@ -2380,6 +2397,12 @@ RValue RValueEmitter::visitErasureExpr(ErasureExpr *E, SGFContext C) {
 
   auto &existentialTL = SGF.getTypeLowering(E->getType());
   auto concreteFormalType = E->getSubExpr()->getType()->getCanonicalType();
+
+  // SubtypeAlias is transparent at the SIL level; use the underlying type
+  // as the formal concrete type so init_existential_addr gets Double, not Celsius.
+  concreteFormalType =
+      concreteFormalType->getInnermostSubtypeAliasUnderlyingType()
+          ->getCanonicalType();
 
   auto archetype = ExistentialArchetypeType::getAny(E->getType()->getCanonicalType());
   AbstractionPattern abstractionPattern(archetype);
