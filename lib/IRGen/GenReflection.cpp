@@ -475,6 +475,17 @@ bool swift::irgen::mangledNameIsUnknownToDeployTarget(IRGenModule &IGM,
   return false;
 }
 
+static CanType getTypeRefRuntimeType(IRGenModule &IGM, CanType type) {
+  type = CanType(Type(type).transformRec([](TypeBase *t) -> std::optional<Type> {
+    if (auto *subtypeAlias = dyn_cast<SubtypeAliasType>(t)) {
+      return subtypeAlias->getInnermostSubtypeAliasUnderlyingType()
+          ->getCanonicalType();
+    }
+    return std::nullopt;
+  }));
+  return IGM.substOpaqueTypesWithUnderlyingTypes(type)->getCanonicalType();
+}
+
 static std::pair<llvm::Constant *, unsigned>
 getTypeRefImpl(IRGenModule &IGM,
                CanType type,
@@ -568,8 +579,7 @@ getTypeRefImpl(IRGenModule &IGM,
 std::pair<llvm::Constant *, unsigned>
 IRGenModule::getTypeRef(CanType type, CanGenericSignature sig,
                         MangledTypeRefRole role) {
-  type = getRuntimeReifiedType(type);
-  type = substOpaqueTypesWithUnderlyingTypes(type);
+  type = getTypeRefRuntimeType(*this, type);
   return getTypeRefImpl(*this, type, sig, role);
 }
 

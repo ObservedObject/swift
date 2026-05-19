@@ -4617,17 +4617,17 @@ public:
     uint8_t rawAccessLevel =
       getRawStableAccessLevel(subtypeAlias->getFormalAccess());
 
-    unsigned abbrCode = S.DeclTypeAbbrCodes[TypeAliasLayout::Code];
-    TypeAliasLayout::emitRecord(S.Out, S.ScratchRecord, abbrCode,
-                                S.addDeclBaseNameRef(subtypeAlias->getName()),
-                                contextID.getOpaqueValue(),
-                                S.addTypeRef(underlying),
-                                /*no longer used*/TypeID(),
-                                subtypeAlias->isImplicit(),
-                                S.addGenericSignatureRef(
-                                           subtypeAlias->getGenericSignature()),
-                                rawAccessLevel,
-                                dependencyIDs);
+    unsigned abbrCode = S.DeclTypeAbbrCodes[SubtypeAliasLayout::Code];
+    SubtypeAliasLayout::emitRecord(
+        S.Out, S.ScratchRecord, abbrCode,
+        S.addDeclBaseNameRef(subtypeAlias->getName()),
+        contextID.getOpaqueValue(),
+        S.addTypeRef(underlying),
+        /*no longer used*/ TypeID(),
+        subtypeAlias->isImplicit(),
+        S.addGenericSignatureRef(subtypeAlias->getGenericSignature()),
+        rawAccessLevel,
+        dependencyIDs);
     writeGenericParams(subtypeAlias->getGenericParams());
   }
 
@@ -6638,6 +6638,7 @@ void Serializer::writeAllDeclsAndTypes() {
   registerDeclTypeAbbr<ClangTypeLayout>();
 
   registerDeclTypeAbbr<TypeAliasLayout>();
+  registerDeclTypeAbbr<SubtypeAliasLayout>();
   registerDeclTypeAbbr<GenericTypeParamTypeLayout>();
   registerDeclTypeAbbr<DependentMemberTypeLayout>();
   registerDeclTypeAbbr<StructLayout>();

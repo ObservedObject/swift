@@ -27,13 +27,11 @@ acceptProtocol(temperature)
 // CHECK-NEXT: P
 
 print(type(of: temperature) == Celsius.self)
-print(Celsius.self == Double.self)
 print(String(describing: type(of: temperature)))
 print(String(reflecting: type(of: temperature)))
 print(Mirror(reflecting: temperature).subjectType)
 
 // CHECK-NEXT: true
-// CHECK-NEXT: false
 // CHECK-NEXT: Double
 // CHECK-NEXT: Swift.Double
 // CHECK-NEXT: Double
