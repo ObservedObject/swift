@@ -107,6 +107,33 @@ bool TypeBase::isEqual(Type Other) const {
   return getCanonicalType() == Other.getPointer()->getCanonicalType();
 }
 
+bool TypeBase::isSubtypeAliasUpcastTo(Type Other) const {
+  auto otherCanonical = Other->getCanonicalType();
+  for (Type current(const_cast<TypeBase *>(this)); current;) {
+    auto *alias = current->getAs<SubtypeAliasType>();
+    if (!alias)
+      return false;
+
+    current = alias->getDecl()->getUnderlyingType();
+    if (current->getCanonicalType()->isEqual(otherCanonical))
+      return true;
+  }
+
+  return false;
+}
+
+bool TypeBase::isRelatedBySubtypeAliasTo(Type Other) const {
+  return isSubtypeAliasUpcastTo(Other) ||
+         Other->isSubtypeAliasUpcastTo(Type(const_cast<TypeBase *>(this)));
+}
+
+Type TypeBase::getInnermostSubtypeAliasUnderlyingType() const {
+  Type current(const_cast<TypeBase *>(this));
+  while (auto *alias = current->getAs<SubtypeAliasType>())
+    current = alias->getDecl()->getUnderlyingType();
+  return current;
+}
+
 /// hasReferenceSemantics - Does this type have reference semantics?
 bool TypeBase::hasReferenceSemantics() {
   return getCanonicalType().hasReferenceSemantics();
@@ -253,6 +280,7 @@ bool CanType::isReferenceTypeImpl(CanType type, const GenericSignatureImpl *sig,
   case TypeKind::Tuple:
   case TypeKind::Enum:
   case TypeKind::Struct:
+  case TypeKind::SubtypeAlias:
   case TypeKind::Metatype:
   case TypeKind::ExistentialMetatype:
   case TypeKind::Module:
@@ -1882,6 +1910,7 @@ CanType TypeBase::computeCanonicalType() {
 
   case TypeKind::Enum:
   case TypeKind::Struct:
+  case TypeKind::SubtypeAlias:
   case TypeKind::Class:
   case TypeKind::Protocol: {
     auto nominalTy = cast<NominalType>(this);
@@ -4729,6 +4758,7 @@ ReferenceCounting TypeBase::getReferenceCounting() {
   case TypeKind::Tuple:
   case TypeKind::Enum:
   case TypeKind::Struct:
+  case TypeKind::SubtypeAlias:
   case TypeKind::Metatype:
   case TypeKind::ExistentialMetatype:
   case TypeKind::Module:

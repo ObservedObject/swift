@@ -91,6 +91,7 @@ class SILFunction;
 class SILType;
 class SourceLoc;
 class TypeAliasDecl;
+class SubtypeAliasDecl;
 class TypeDecl;
 class NominalTypeDecl;
 class GenericTypeDecl;
@@ -635,6 +636,18 @@ public:
   /// To compare sugar, check for pointer equality of the underlying TypeBase *
   /// values, obtained by calling getPointer().
   bool isEqual(Type Other) const;
+
+  /// Returns true if this type is a subtypealias whose underlying-type chain
+  /// contains \p Other.
+  bool isSubtypeAliasUpcastTo(Type Other) const;
+
+  /// Returns true if either type is a subtypealias whose underlying-type chain
+  /// contains the other type.
+  bool isRelatedBySubtypeAliasTo(Type Other) const;
+
+  /// If this type is a subtypealias, recursively unwrap its underlying type.
+  /// Otherwise, return this type.
+  Type getInnermostSubtypeAliasUnderlyingType() const;
   
   /// getDesugaredType - If this type is a sugared type, remove all levels of
   /// sugar until we get down to a non-sugar type.
@@ -3190,6 +3203,28 @@ private:
              RecursiveTypeProperties properties);
 };
 DEFINE_EMPTY_CAN_TYPE_WRAPPER(StructType, NominalType)
+
+/// SubtypeAliasType - This represents the nominal type declared by a
+/// SubtypeAliasDecl.
+class SubtypeAliasType : public NominalType {
+public:
+  SubtypeAliasDecl *getDecl() const {
+    return reinterpret_cast<SubtypeAliasDecl *>(NominalType::getDecl());
+  }
+
+  static SubtypeAliasType *get(SubtypeAliasDecl *D, Type Parent,
+                               const ASTContext &C);
+
+  static bool classof(const TypeBase *T) {
+    return T->getKind() == TypeKind::SubtypeAlias;
+  }
+
+private:
+  SubtypeAliasType(SubtypeAliasDecl *TheDecl, Type Parent,
+                   const ASTContext &Ctx,
+                   RecursiveTypeProperties properties);
+};
+DEFINE_EMPTY_CAN_TYPE_WRAPPER(SubtypeAliasType, NominalType)
 
 /// ClassType - This represents the type declared by a ClassDecl.
 class ClassType : public NominalType {

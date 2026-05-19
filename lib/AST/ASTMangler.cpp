@@ -1731,6 +1731,7 @@ void ASTMangler::appendType(Type type, GenericSignature sig,
     case TypeKind::Class:
     case TypeKind::Enum:
     case TypeKind::Struct:
+    case TypeKind::SubtypeAlias:
     case TypeKind::BoundGenericClass:
     case TypeKind::BoundGenericEnum:
     case TypeKind::BoundGenericStruct:
@@ -3245,6 +3246,7 @@ void ASTMangler::appendAnyGenericType(const GenericTypeDecl *decl,
       llvm_unreachable("not a nominal type");
 
     case DeclKind::TypeAlias:
+    case DeclKind::SubtypeAlias:
       appendOperator("a");
       break;
     case DeclKind::Protocol:
@@ -5454,6 +5456,7 @@ ASTMangler::BaseEntitySignature::BaseEntitySignature(const Decl *decl)
     case DeclKind::Accessor:
     case DeclKind::Enum:
     case DeclKind::Struct:
+    case DeclKind::SubtypeAlias:
     case DeclKind::Class:
     case DeclKind::EnumElement:
       sig = decl->getInnermostDeclContext()->getGenericSignatureOfContext();

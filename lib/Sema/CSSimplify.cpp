@@ -7049,6 +7049,9 @@ bool ConstraintSystem::repairFailures(
     if (hasConversionOrRestriction(ConversionRestrictionKind::Superclass))
       return false;
 
+    if (hasConversionOrRestriction(ConversionRestrictionKind::SubtypeAlias))
+      return false;
+
     // Let's check whether the sub-expression is an optional type which
     // is possible to unwrap (either by force or `??`) to satisfy the cast,
     // otherwise we'd have to fallback to force downcast.
@@ -7704,6 +7707,7 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
 
     case TypeKind::Enum:
     case TypeKind::Struct:
+    case TypeKind::SubtypeAlias:
     case TypeKind::Class: {
       auto nominal1 = cast<NominalType>(desugar1);
       auto nominal2 = cast<NominalType>(desugar2);
@@ -8026,6 +8030,20 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
   }
 
   if (kind >= ConstraintKind::Subtype) {
+    // Subtypealias-to-underlying conversion (Celsius -> Double).
+    if (type1->isSubtypeAliasUpcastTo(type2)) {
+      conversionsOrFixes.push_back(ConversionRestrictionKind::SubtypeAlias);
+    }
+
+    // Underlying-to-subtypealias conversion (Double -> Celsius):
+    // only allowed in an explicit 'as' coercion, not implicitly.
+    if (type2->isSubtypeAliasUpcastTo(type1)) {
+      auto *loc = getConstraintLocator(locator);
+      if (isa_and_nonnull<LiteralExpr>(locator.trySimplifyToExpr()) ||
+          loc->isForCoercion() ||
+          loc->isLastElement<LocatorPathElt::ConstructorMember>())
+        conversionsOrFixes.push_back(ConversionRestrictionKind::SubtypeAlias);
+    }
     // Subclass-to-superclass conversion.
     if (type1->mayHaveSuperclass() &&
         type2->getClassOrBoundGenericClass() &&
@@ -8623,6 +8641,7 @@ ConstraintSystem::simplifyConstructionConstraint(
 
   case TypeKind::Enum:
   case TypeKind::Struct:
+  case TypeKind::SubtypeAlias:
   case TypeKind::Class:
   case TypeKind::BoundGenericClass:
   case TypeKind::BoundGenericEnum:
@@ -10910,11 +10929,43 @@ performMemberLookup(ConstraintKind constraintKind, DeclNameRef memberName,
     return OverloadChoice::getDecl(baseTy, cand, functionRefInfo);
   };
 
+  // If baseTy is a SubtypeAlias and the candidate was found in an underlying
+  // type (not in baseTy's own decl), use the underlying nominal as the overload
+  // base so the constraint solver can apply it correctly.
+  auto adjustBaseForSubtypeAlias = [&](Type base, ValueDecl *cand) -> Type {
+    // Unwrap metatype for static lookup (e.g. Celsius.Type -> Celsius).
+    bool isMeta = false;
+    Type baseInst = base;
+    if (auto *meta = base->getAs<AnyMetatypeType>()) {
+      baseInst = meta->getInstanceType();
+      isMeta = true;
+    }
+    if (!baseInst->getAs<SubtypeAliasType>())
+      return base;
+    auto *candDC = cand->getDeclContext();
+    // Walk the underlying chain to find which nominal the cand belongs to.
+    Type current = baseInst;
+    while (auto *sta = current->getAs<SubtypeAliasType>()) {
+      current = sta->getDecl()->getUnderlyingType();
+      if (auto *nom = current->getAnyNominal()) {
+        if (candDC->getSelfNominalTypeDecl() == nom)
+          return isMeta ? MetatypeType::get(current) : current;
+      }
+    }
+    return base;
+  };
+
   // Add all results from this lookup.
-  for (auto result : lookup)
-    addChoice(getOverloadChoice(result.getValueDecl(),
-                                /*isBridged=*/false,
-                                /*isUnwrappedOptional=*/false));
+  for (auto result : lookup) {
+    auto *cand = result.getValueDecl();
+    auto adjustedBase = adjustBaseForSubtypeAlias(baseTy, cand);
+    if (adjustedBase.getPointer() != baseTy.getPointer()) {
+      addChoice(OverloadChoice::getDecl(adjustedBase, cand, functionRefInfo));
+    } else {
+      addChoice(getOverloadChoice(cand, /*isBridged=*/false,
+                                  /*isUnwrappedOptional=*/false));
+    }
+  }
 
   // Backward compatibility hack. In Swift 4, `init` and init were
   // the same name, so you could write "foo.init" to look up a
@@ -14604,6 +14655,12 @@ ConstraintSystem::simplifyRestrictedConstraintImpl(
                ? getTypeMatchSuccess()
                : getTypeMatchFailure(locator);
   }
+
+  case ConversionRestrictionKind::SubtypeAlias:
+    addContextualScore();
+    return type1->isRelatedBySubtypeAliasTo(type2)
+               ? getTypeMatchSuccess()
+               : getTypeMatchFailure(locator);
 
   // for $< in { <, <c, <oc }:
   //   T $< U, U : P_i ===> T $< protocol<P_i...>

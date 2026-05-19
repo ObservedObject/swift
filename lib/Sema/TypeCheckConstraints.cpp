@@ -1624,6 +1624,9 @@ TypeChecker::typeCheckCheckedCast(Type fromType, Type toType,
     return CheckedCastKind::Coercion;
   }
 
+  if (fromType->isRelatedBySubtypeAliasTo(toType))
+    return CheckedCastKind::ValueCast;
+
   // Since move-only types currently cannot conform to protocols, nor be a class
   // type, the subtyping hierarchy looks a bit like this:
   //

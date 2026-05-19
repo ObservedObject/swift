@@ -2721,6 +2721,9 @@ void IRGenModule::emitGlobalDecl(Decl *D) {
   case DeclKind::Macro:
     return;
 
+  case DeclKind::SubtypeAlias:
+    return emitSubtypeAliasDecl(cast<SubtypeAliasDecl>(D));
+
   case DeclKind::Enum:
     return emitEnumDecl(cast<EnumDecl>(D));
 
@@ -6046,6 +6049,10 @@ void IRGenModule::emitNestedTypeDecls(DeclRange members) {
     case DeclKind::TypeAlias:
     case DeclKind::OpaqueType:
       // Do nothing.
+      continue;
+
+    case DeclKind::SubtypeAlias:
+      emitSubtypeAliasDecl(cast<SubtypeAliasDecl>(member));
       continue;
 
     case DeclKind::Enum:
