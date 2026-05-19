@@ -1668,6 +1668,13 @@ static void addSelfConstraint(ConstraintSystem &cs, Type objectTy, Type selfTy,
     return;
   }
 
+  if (objectTy->isSubtypeAliasUpcastTo(selfTy)) {
+    cs.addConstraint(ConstraintKind::Conversion, objectTy, selfTy,
+                     cs.getConstraintLocator(locator),
+                     /*isFavored=*/false, preparedOverload);
+    return;
+  }
+
   // Otherwise, the types must be equivalent.
   cs.addConstraint(ConstraintKind::Bind, objectTy, selfTy,
                    cs.getConstraintLocator(locator), /*isFavored=*/false,

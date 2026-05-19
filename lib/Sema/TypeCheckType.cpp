@@ -6859,6 +6859,15 @@ Type TypeChecker::substMemberTypeWithBase(TypeDecl *member,
       return ErrorType::get(memberType);
 
     subs = baseTy->getMemberSubstitutionMap(member);
+    // For SubtypeAlias, if the substitution map is empty (because the alias
+    // has no generic params), try the underlying type to resolve associated
+    // types like Element (e.g. SArray.Element = Set<Int>.Element = Int).
+    if (subs.empty()) {
+      auto underlyingBase =
+          baseTy->getInnermostSubtypeAliasUnderlyingType();
+      if (!underlyingBase->isEqual(baseTy))
+        subs = underlyingBase->getMemberSubstitutionMap(member);
+    }
     resultType = memberType.subst(subs);
   } else {
     resultType = memberType;

@@ -88,6 +88,11 @@ TypeConverter::getAbstractionPattern(VarDecl *var, bool isNonObjC) {
                  .getCanonicalSignature();
 
   auto interfaceType = var->getInterfaceType();
+
+  // SubtypeAlias types should use their underlying type for abstraction
+  // to avoid type parameters without a generic signature.
+  interfaceType = interfaceType->getInnermostSubtypeAliasUnderlyingType();
+
   if (auto *packExpansionType = interfaceType->getAs<PackExpansionType>())
     interfaceType = packExpansionType->getPatternType();
 

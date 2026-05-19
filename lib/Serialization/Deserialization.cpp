@@ -3723,6 +3723,62 @@ public:
     return alias;
   }
 
+  Expected<Decl *> deserializeSubtypeAlias(ArrayRef<uint64_t> scratch,
+                                           StringRef blobData) {
+    IdentifierID nameID;
+    DeclContextID contextID;
+    TypeID underlyingTypeID, interfaceTypeID;
+    bool isImplicit;
+    GenericSignatureID genericSigID;
+    uint8_t rawAccessLevel;
+    ArrayRef<uint64_t> dependencyIDs;
+
+    decls_block::SubtypeAliasLayout::readRecord(
+        scratch, nameID, contextID, underlyingTypeID, interfaceTypeID,
+        isImplicit, genericSigID, rawAccessLevel, dependencyIDs);
+
+    Identifier name = MF.getIdentifier(nameID);
+    PrettySupplementalDeclNameTrace trace(name);
+
+    for (TypeID dependencyID : dependencyIDs) {
+      auto dependency = MF.getTypeChecked(dependencyID);
+      if (!dependency) {
+        return llvm::make_error<TypeError>(
+            name, takeErrorInfo(dependency.takeError()));
+      }
+    }
+
+    DeclContext *DC;
+    SET_OR_RETURN_ERROR(DC, MF.getDeclContextChecked(contextID));
+
+    GenericParamList *genericParams;
+    SET_OR_RETURN_ERROR(genericParams, MF.maybeReadGenericParams(DC));
+    if (declOrOffset.isComplete())
+      return declOrOffset;
+
+    auto subtypeAlias = MF.createDecl<SubtypeAliasDecl>(
+        SourceLoc(), SourceLoc(), name, SourceLoc(), genericParams, DC);
+    declOrOffset = subtypeAlias;
+
+    auto genericSig = MF.getGenericSignature(genericSigID);
+    subtypeAlias->setGenericSignature(genericSig);
+
+    auto underlyingOrErr = MF.getTypeChecked(underlyingTypeID);
+    if (!underlyingOrErr)
+      return underlyingOrErr.takeError();
+    subtypeAlias->setUnderlyingType(underlyingOrErr.get());
+
+    if (auto accessLevel = getActualAccessLevel(rawAccessLevel))
+      subtypeAlias->setAccess(*accessLevel);
+    else
+      return MF.diagnoseFatal();
+
+    if (isImplicit)
+      subtypeAlias->setImplicit();
+
+    return subtypeAlias;
+  }
+
   Expected<Decl *>
   deserializeGenericTypeParamDecl(ArrayRef<uint64_t> scratch,
                                   StringRef blobData) {
@@ -6885,6 +6941,7 @@ DeclDeserializer::getDeclCheckedImpl(
   }
 
   CASE(TypeAlias)
+  CASE(SubtypeAlias)
   CASE(GenericTypeParamDecl)
   CASE(AssociatedTypeDecl)
   CASE(Struct)

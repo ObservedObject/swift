@@ -1693,6 +1693,7 @@ public:
   void emitProtocolDecl(ProtocolDecl *D);
   void emitEnumDecl(EnumDecl *D);
   void emitStructDecl(StructDecl *D);
+  void emitSubtypeAliasDecl(SubtypeAliasDecl *D);
   void emitClassDecl(ClassDecl *D);
   void emitExtension(ExtensionDecl *D);
   void emitOpaqueTypeDecl(OpaqueTypeDecl *D);

@@ -1639,6 +1639,19 @@ namespace decls_block {
     // Trailed by generic parameters (if any).
   >;
 
+  using SubtypeAliasLayout = BCRecordLayout<
+    SUBTYPE_ALIAS_DECL,
+    IdentifierIDField, // name
+    DeclContextIDField,// context decl
+    TypeIDField, // underlying type
+    TypeIDField, // interface type (no longer used)
+    BCFixed<1>,  // implicit flag
+    GenericSignatureIDField, // generic environment
+    AccessLevelField, // access level
+    BCArray<TypeIDField> // dependency types
+    // Trailed by generic parameters (if any).
+  >;
+
   using GenericTypeParamDeclLayout = BCRecordLayout<GENERIC_TYPE_PARAM_DECL,
     IdentifierIDField,     // name
     BCFixed<1>,            // implicit flag
@@ -2697,6 +2710,8 @@ static inline decls_block::RecordKind getKindForTable(const Decl *D) {
   switch (D->getKind()) {
   case DeclKind::TypeAlias:
     return decls_block::TYPE_ALIAS_DECL;
+  case DeclKind::SubtypeAlias:
+    return decls_block::SUBTYPE_ALIAS_DECL;
   case DeclKind::Enum:
     return decls_block::ENUM_DECL;
   case DeclKind::Struct:

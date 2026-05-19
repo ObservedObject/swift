@@ -345,6 +345,7 @@ static void doDynamicLookup(VisibleDeclConsumer &Consumer,
       case DeclKind::GenericTypeParam:
       case DeclKind::AssociatedType:
       case DeclKind::TypeAlias:
+      case DeclKind::SubtypeAlias:
       case DeclKind::Enum:
       case DeclKind::Class:
       case DeclKind::Struct:
@@ -721,6 +722,19 @@ static void lookupVisibleMemberDeclsImpl(
   // class type.
   if (auto *const DS = BaseTy->getAs<DynamicSelfType>()) {
     BaseTy = DS->getSelfType();
+  }
+
+  // A SubtypeAlias also inherits members from its underlying type chain.
+  if (auto *STA = BaseTy->getAs<SubtypeAliasType>()) {
+    auto *NTD = STA->getDecl();
+    lookupTypeMembers(BaseTy, NTD, Consumer, CurrDC, LS, Reason);
+    lookupDeclsFromProtocolsBeingConformedTo(BaseTy, Consumer, LS, CurrDC,
+                                             Reason, Visited);
+    // Walk the underlying type chain recursively.
+    Type underlying = NTD->getUnderlyingType();
+    lookupVisibleMemberDeclsImpl(underlying, Consumer, CurrDC, LS,
+                                 getReasonForSuper(Reason), Visited);
+    return;
   }
 
   auto *NTD = BaseTy->getAnyNominal();
